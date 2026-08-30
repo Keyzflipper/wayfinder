@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#16302C" />
+<title>Wayfinder</title>
+<meta name="description" content="Point your camera. Wayfinder tells you what you're looking at and what's nearby." />
+
+<link rel="manifest" href="/manifest.json" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+<link rel="icon" href="/icons/icon-192.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          chart: '#16302C',
+          parchment: '#EDE6D6',
+          rust: '#B5502E',
+          seaglass: '#7A9186',
+          brass: '#C9A227',
+        },
+        fontFamily: {
+          display: ['Fraunces', 'serif'],
+          body: ['Inter', 'sans-serif'],
+          data: ['"IBM Plex Mono"', 'monospace'],
+        },
+      },
+    },
+  };
+</script>
+
+<link rel="stylesheet" href="/src/styles.css" />
+</head>
+
+<body class="bg-chart text-parchment font-body antialiased overscroll-none">
+
+<div id="app" class="relative h-[100dvh] w-full overflow-hidden">
+
+  <!-- ===== Header ===== -->
+  <header class="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-5 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 bg-gradient-to-b from-chart/90 to-transparent pointer-events-none">
+    <h1 class="font-display text-lg tracking-tight text-parchment">Wayfinder</h1>
+    <button
+      id="trip-button"
+      type="button"
+      class="pointer-events-auto font-data text-xs text-seaglass border border-seaglass/40 rounded-sm px-2.5 py-1 hover:border-brass hover:text-brass transition-colors"
+      aria-label="Current trip"
+    >
+      <span id="trip-name">No trip set</span>
+    </button>
+  </header>
+
+  <!-- ===== Camera viewfinder ===== -->
+  <main class="relative h-full w-full">
+    <video
+      id="camera-feed"
+      class="h-full w-full object-cover bg-chart"
+      autoplay
+      playsinline
+      muted
+    ></video>
+    <canvas id="capture-canvas" class="hidden"></canvas>
+
+    <!-- Camera permission / unavailable state -->
+    <div
+      id="camera-empty-state"
+      class="hidden absolute inset-0 z-20 flex-col items-center justify-center gap-4 bg-chart px-8 text-center"
+    >
+      <p class="font-display text-2xl text-parchment">Wayfinder needs your camera</p>
+      <p class="font-body text-sm text-seaglass max-w-xs">
+        Point it at a landmark, a building, a plaque — anything you want identified.
+      </p>
+      <button
+        id="camera-retry-button"
+        type="button"
+        class="font-body text-sm bg-rust text-parchment rounded-sm px-5 py-2.5 hover:bg-rust/90 transition-colors"
+      >
+        Turn on camera
+      </button>
+    </div>
+
+    <!-- GPS data strip -->
+    <div
+      id="gps-strip"
+      class="absolute left-0 right-0 z-20 flex items-center justify-between px-5 py-2 bg-chart/80 backdrop-blur-sm border-t border-seaglass/20"
+      style="bottom: calc(env(safe-area-inset-bottom) + 6.5rem)"
+    >
+      <div class="flex items-center gap-2 font-data text-xs text-seaglass">
+        <span id="gps-indicator" class="h-1.5 w-1.5 rounded-full bg-seaglass/50" aria-hidden="true"></span>
+        <span id="gps-coords">Locating&hellip;</span>
+      </div>
+      <span id="gps-accuracy" class="font-data text-xs text-seaglass/70"></span>
+    </div>
+
+    <!-- Shutter control -->
+    <div
+      class="absolute left-0 right-0 z-20 flex items-center justify-center"
+      style="bottom: calc(env(safe-area-inset-bottom) + 1.5rem)"
+    >
+      <button
+        id="shutter-button"
+        type="button"
+        aria-label="Identify what you're looking at"
+        class="h-[72px] w-[72px] rounded-full border-[3px] border-parchment/90 flex items-center justify-center transition-transform active:scale-95"
+      >
+        <span class="h-[58px] w-[58px] rounded-full bg-rust"></span>
+      </button>
+    </div>
+  </main>
+
+  <!-- ===== Loading overlay ===== -->
+  <div
+    id="loading-overlay"
+    class="hidden fixed inset-0 z-40 flex-col items-center justify-center gap-3 bg-chart/95 backdrop-blur-sm"
+    role="status"
+    aria-live="polite"
+  >
+    <div class="h-8 w-8 rounded-full border-2 border-seaglass/30 border-t-brass animate-spin" aria-hidden="true"></div>
+    <p id="loading-message" class="font-data text-xs text-seaglass tracking-wide">Looking it up&hellip;</p>
+  </div>
+
+  <!-- ===== Results bottom sheet ===== -->
+  <div
+    id="results-sheet"
+    class="translate-y-full fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] rounded-t-lg bg-parchment text-chart transition-transform duration-300 ease-out flex flex-col"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="results-title"
+  >
+    <div class="flex items-center justify-between px-5 pt-4 pb-2 border-b border-chart/10">
+      <div class="h-1 w-10 rounded-full bg-chart/15 absolute left-1/2 -translate-x-1/2 top-2" aria-hidden="true"></div>
+      <h2 id="results-title" class="font-display text-xl pt-2">What you're looking at</h2>
+      <button
+        id="results-close-button"
+        type="button"
+        aria-label="Close"
+        class="pt-2 text-chart/50 hover:text-chart transition-colors font-body text-sm"
+      >
+        Close
+      </button>
+    </div>
+
+    <div id="results-body" class="overflow-y-auto px-5 py-4 flex flex-col gap-6">
+
+      <!-- Identification -->
+      <section id="result-identification" class="flex flex-col gap-1.5">
+        <p id="result-id-name" class="font-display text-2xl leading-snug">&mdash;</p>
+        <p id="result-id-detail" class="font-body text-sm text-chart/70"></p>
+        <p class="font-data text-xs text-brass mt-1">
+          <span id="result-id-confidence"></span>
+        </p>
+      </section>
+
+      <!-- Guide excerpt (present only if the uploaded guide mentions this spot) -->
+      <section id="result-guide" class="hidden flex-col gap-1.5 border-l-2 border-brass pl-4">
+        <p class="font-body text-xs text-seaglass">From your travel guide</p>
+        <p id="result-guide-text" class="font-body text-sm leading-relaxed"></p>
+      </section>
+
+      <!-- Nearby recommendations -->
+      <section id="result-nearby" class="flex flex-col gap-3">
+        <p class="font-body text-xs text-seaglass">Nearby</p>
+        <ul id="result-nearby-list" class="flex flex-col divide-y divide-chart/10"></ul>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- Backdrop for the results sheet -->
+  <div
+    id="results-backdrop"
+    class="hidden fixed inset-0 z-40 bg-chart/60"
+  ></div>
+
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

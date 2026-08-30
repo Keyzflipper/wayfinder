@@ -1,0 +1,51 @@
+name = "wayfinder-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]  # needed for PDF parsing (pdf-parse.ts) in guide-upload.ts
+
+# ============================================================
+# D1 — structured data (trips, saved_finds, guide_chunks)
+# `binding` name (DB) must match the Env interface in
+# src/types/index.ts once that file is written.
+# `database_id` is filled in after running `wrangler d1 create`
+# (see initialization commands, next step).
+# ============================================================
+[[d1_databases]]
+binding = "DB"
+database_name = "wayfinder-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# ============================================================
+# R2 — binary storage, split by lifecycle
+# ============================================================
+[[r2_buckets]]
+binding = "PHOTOS"
+bucket_name = "wayfinder-photos"
+
+[[r2_buckets]]
+binding = "GUIDES"
+bucket_name = "wayfinder-guides"
+
+# ============================================================
+# Non-secret config. Safe to commit.
+# Secrets (ANTHROPIC_API_KEY, MAPBOX_TOKEN) are NOT here — set
+# via `wrangler secret put <NAME>` (prod) or `.dev.vars` (local),
+# and they land in the same Env interface at runtime without ever
+# touching this file.
+#
+# CLOUDFLARE_ACCOUNT_ID and AI_GATEWAY_ID are plain vars, not
+# secrets — they're routing identifiers (which gateway to call),
+# not credentials. The actual credential (ANTHROPIC_API_KEY) still
+# travels as a secret on each request.
+# ============================================================
+[vars]
+ENVIRONMENT = "development"
+MAX_PHOTO_UPLOAD_BYTES = "8388608"  # 8 MB cap on a single capture
+CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_ACCOUNT_ID"
+AI_GATEWAY_ID = "wayfinder-gateway"
+
+# ============================================================
+# Local dev server
+# ============================================================
+[dev]
+port = 8787
