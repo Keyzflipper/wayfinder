@@ -95,6 +95,7 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
     guideExcerpt,
     nearby,
     cachedAt: now,
+    tripId,
   };
 
   return new Response(JSON.stringify(response), {

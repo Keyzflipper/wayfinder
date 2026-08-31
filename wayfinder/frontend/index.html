@@ -47,14 +47,24 @@
   <!-- ===== Header ===== -->
   <header class="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-5 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 bg-gradient-to-b from-chart/90 to-transparent pointer-events-none">
     <h1 class="font-display text-lg tracking-tight text-parchment">Wayfinder</h1>
-    <button
-      id="trip-button"
-      type="button"
-      class="pointer-events-auto font-data text-xs text-seaglass border border-seaglass/40 rounded-sm px-2.5 py-1 hover:border-brass hover:text-brass transition-colors"
-      aria-label="Current trip"
-    >
-      <span id="trip-name">No trip set</span>
-    </button>
+    <div class="pointer-events-auto flex items-center gap-2">
+      <button
+        id="guide-button"
+        type="button"
+        class="font-data text-xs text-seaglass border border-seaglass/40 rounded-sm px-2.5 py-1 hover:border-brass hover:text-brass transition-colors"
+        aria-label="Upload travel guide"
+      >
+        Guide
+      </button>
+      <button
+        id="trip-button"
+        type="button"
+        class="font-data text-xs text-seaglass border border-seaglass/40 rounded-sm px-2.5 py-1 hover:border-brass hover:text-brass transition-colors"
+        aria-label="Current trip"
+      >
+        <span id="trip-name">No trip set</span>
+      </button>
+    </div>
   </header>
 
   <!-- ===== Camera viewfinder ===== -->
@@ -162,6 +172,14 @@
       <section id="result-guide" class="hidden flex-col gap-1.5 border-l-2 border-brass pl-4">
         <p class="font-body text-xs text-seaglass">From your travel guide</p>
         <p id="result-guide-text" class="font-body text-sm leading-relaxed"></p>
+        <button
+          id="result-guide-more-button"
+          type="button"
+          class="self-start font-data text-xs text-brass hover:text-brass/70 transition-colors mt-1"
+        >
+          More from your guide nearby
+        </button>
+        <ul id="result-guide-more-list" class="hidden flex-col gap-3 mt-1"></ul>
       </section>
 
       <!-- Nearby recommendations -->
@@ -176,6 +194,81 @@
   <!-- Backdrop for the results sheet -->
   <div
     id="results-backdrop"
+    class="hidden fixed inset-0 z-40 bg-chart/60"
+  ></div>
+
+  <!-- ===== Guide upload bottom sheet ===== -->
+  <div
+    id="guide-sheet"
+    class="translate-y-full fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] rounded-t-lg bg-parchment text-chart transition-transform duration-300 ease-out flex flex-col"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="guide-sheet-title"
+  >
+    <div class="flex items-center justify-between px-5 pt-4 pb-2 border-b border-chart/10">
+      <div class="h-1 w-10 rounded-full bg-chart/15 absolute left-1/2 -translate-x-1/2 top-2" aria-hidden="true"></div>
+      <h2 id="guide-sheet-title" class="font-display text-xl pt-2">Travel guide</h2>
+      <button
+        id="guide-sheet-close-button"
+        type="button"
+        aria-label="Close"
+        class="pt-2 text-chart/50 hover:text-chart transition-colors font-body text-sm"
+      >
+        Close
+      </button>
+    </div>
+
+    <div class="overflow-y-auto px-5 py-4 flex flex-col gap-4">
+
+      <!-- No trip set yet — a guide always belongs to one -->
+      <div id="guide-no-trip" class="hidden flex-col gap-3">
+        <p class="font-body text-sm text-chart/70">Set a trip before uploading a guide — every guide belongs to one.</p>
+        <button
+          id="guide-set-trip-button"
+          type="button"
+          class="self-start font-body text-sm bg-rust text-parchment rounded-sm px-4 py-2 hover:bg-rust/90 transition-colors"
+        >
+          Set trip name
+        </button>
+      </div>
+
+      <!-- Upload form -->
+      <div id="guide-upload-form" class="hidden flex-col gap-3">
+        <p class="font-body text-sm text-chart/70">
+          Upload a PDF travel guide for <span id="guide-upload-trip-name" class="text-chart font-medium"></span>. Wayfinder reads it and matches excerpts to what you photograph nearby.
+        </p>
+
+        <input type="file" id="guide-file-input" accept="application/pdf" class="hidden" />
+
+        <button
+          id="guide-choose-file-button"
+          type="button"
+          class="self-start font-body text-sm border border-chart/20 rounded-sm px-4 py-2 hover:border-brass hover:text-brass transition-colors"
+        >
+          Choose PDF
+        </button>
+
+        <p id="guide-selected-file" class="hidden font-data text-xs text-chart/60"></p>
+
+        <button
+          id="guide-upload-button"
+          type="button"
+          disabled
+          class="self-start font-body text-sm bg-rust text-parchment rounded-sm px-4 py-2 hover:bg-rust/90 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+        >
+          Upload
+        </button>
+      </div>
+
+      <!-- Status: uploading / success summary / error -->
+      <div id="guide-status" class="hidden flex-col gap-2"></div>
+
+    </div>
+  </div>
+
+  <!-- Backdrop for the guide sheet -->
+  <div
+    id="guide-backdrop"
     class="hidden fixed inset-0 z-40 bg-chart/60"
   ></div>
 

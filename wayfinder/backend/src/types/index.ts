@@ -86,6 +86,7 @@ export interface IdentifyResponse {
   guideExcerpt: string | null;
   nearby: NearbyPlace[];
   cachedAt: string; // maps to saved_finds.updated_at — lets the UI flag stale data
+  tripId: string | null; // lets the client call GET /api/guide/nearby for more excerpts without re-deriving the trip
 }
 
 export interface GuideUploadResponse {

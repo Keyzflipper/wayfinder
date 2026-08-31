@@ -11,6 +11,8 @@ const appState = {
   position: null,       // { lat, lon, accuracy } | null
   activeTripName: localStorage.getItem('wayfinder:activeTrip') || null,
   lastPhotoBlob: null,
+  lastTripId: null,     // from the most recent /api/identify response — powers "More from your guide nearby"
+  selectedGuideFile: null,
 };
 
 // ---- DOM refs ----
@@ -39,12 +41,31 @@ const resultIdConfidence = document.getElementById('result-id-confidence');
 
 const resultGuideSection = document.getElementById('result-guide');
 const resultGuideText = document.getElementById('result-guide-text');
+const resultGuideMoreButton = document.getElementById('result-guide-more-button');
+const resultGuideMoreList = document.getElementById('result-guide-more-list');
 
 const resultNearbySection = document.getElementById('result-nearby');
 const resultNearbyList = document.getElementById('result-nearby-list');
 
 const tripButton = document.getElementById('trip-button');
 const tripNameEl = document.getElementById('trip-name');
+
+const guideButton = document.getElementById('guide-button');
+const guideSheet = document.getElementById('guide-sheet');
+const guideBackdrop = document.getElementById('guide-backdrop');
+const guideSheetCloseButton = document.getElementById('guide-sheet-close-button');
+
+const guideNoTrip = document.getElementById('guide-no-trip');
+const guideSetTripButton = document.getElementById('guide-set-trip-button');
+
+const guideUploadForm = document.getElementById('guide-upload-form');
+const guideUploadTripNameEl = document.getElementById('guide-upload-trip-name');
+const guideFileInput = document.getElementById('guide-file-input');
+const guideChooseFileButton = document.getElementById('guide-choose-file-button');
+const guideSelectedFileEl = document.getElementById('guide-selected-file');
+const guideUploadButton = document.getElementById('guide-upload-button');
+
+const guideStatusEl = document.getElementById('guide-status');
 
 // ---- Trip state (client-side only, until D1 is wired up) ----
 function renderTripName() {
@@ -62,6 +83,116 @@ function handleTripButtonClick() {
     localStorage.removeItem('wayfinder:activeTrip');
   }
   renderTripName();
+  renderGuideSheetTripState();
+}
+
+// ---- Guide upload sheet ----
+function renderGuideSheetTripState() {
+  if (appState.activeTripName) {
+    guideNoTrip.classList.add('hidden');
+    guideNoTrip.classList.remove('flex');
+    guideUploadForm.classList.remove('hidden');
+    guideUploadForm.classList.add('flex');
+    guideUploadTripNameEl.textContent = appState.activeTripName;
+  } else {
+    guideUploadForm.classList.add('hidden');
+    guideUploadForm.classList.remove('flex');
+    guideNoTrip.classList.remove('hidden');
+    guideNoTrip.classList.add('flex');
+  }
+}
+
+function clearGuideFileSelection() {
+  appState.selectedGuideFile = null;
+  guideFileInput.value = '';
+  guideSelectedFileEl.textContent = '';
+  guideSelectedFileEl.classList.add('hidden');
+  guideUploadButton.disabled = true;
+}
+
+function resetGuideUploadForm() {
+  clearGuideFileSelection();
+  guideStatusEl.innerHTML = '';
+  guideStatusEl.classList.add('hidden');
+  guideStatusEl.classList.remove('flex');
+}
+
+function openGuideSheet() {
+  renderGuideSheetTripState();
+  resetGuideUploadForm();
+  guideSheet.classList.remove('translate-y-full');
+  guideBackdrop.classList.remove('hidden');
+}
+
+function closeGuideSheet() {
+  guideSheet.classList.add('translate-y-full');
+  guideBackdrop.classList.add('hidden');
+}
+
+function handleGuideSetTripButtonClick() {
+  handleTripButtonClick();
+  renderGuideSheetTripState();
+}
+
+function handleGuideChooseFileClick() {
+  guideFileInput.click();
+}
+
+function handleGuideFileChange() {
+  const file = guideFileInput.files?.[0] ?? null;
+  appState.selectedGuideFile = file;
+  if (file) {
+    guideSelectedFileEl.textContent = file.name;
+    guideSelectedFileEl.classList.remove('hidden');
+  } else {
+    guideSelectedFileEl.classList.add('hidden');
+  }
+  guideUploadButton.disabled = !file;
+  guideStatusEl.innerHTML = '';
+  guideStatusEl.classList.add('hidden');
+  guideStatusEl.classList.remove('flex');
+}
+
+function showGuideStatus(html) {
+  guideStatusEl.innerHTML = html;
+  guideStatusEl.classList.remove('hidden');
+  guideStatusEl.classList.add('flex');
+}
+
+async function handleGuideUploadClick() {
+  if (!appState.selectedGuideFile || !appState.activeTripName) return;
+
+  guideUploadButton.disabled = true;
+  showGuideStatus('<p class="font-data text-xs text-seaglass">Reading your guide&hellip; this can take a little while.</p>');
+
+  try {
+    const formData = new FormData();
+    formData.append('pdf', appState.selectedGuideFile);
+    formData.append('tripName', appState.activeTripName);
+
+    const response = await fetch(`${API_BASE}/guide`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Guide upload failed: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const truncatedNote = result.truncated
+      ? '<p class="font-body text-xs text-seaglass mt-1">This guide had more than Wayfinder processes in one upload — only the first chunks were matched.</p>'
+      : '';
+    showGuideStatus(`
+      <p class="font-body text-sm text-chart">Guide added — ${result.chunksCreated} excerpt${result.chunksCreated === 1 ? '' : 's'} from ${result.totalPages} page${result.totalPages === 1 ? '' : 's'}, ${result.chunksGeocoded} matched to a place.</p>
+      ${truncatedNote}
+    `);
+    clearGuideFileSelection();
+  } catch (err) {
+    console.error('Guide upload failed:', err);
+    showGuideStatus('<p class="font-body text-sm text-rust">Couldn\'t upload that guide — check your connection and try again.</p>');
+    guideUploadButton.disabled = false;
+  }
 }
 
 // ---- Camera ----
@@ -184,6 +315,7 @@ async function handleShutterClick() {
     }
 
     const result = await response.json();
+    appState.lastTripId = result.tripId ?? null;
     renderResults(result);
     hideLoading();
     openResultsSheet();
@@ -214,6 +346,13 @@ function renderResults(result) {
     ? `${Math.round(result.confidence * 100)}% confidence`
     : '';
 
+  resultGuideMoreList.innerHTML = '';
+  resultGuideMoreList.classList.add('hidden');
+  resultGuideMoreList.classList.remove('flex');
+  resultGuideMoreButton.classList.remove('hidden');
+  resultGuideMoreButton.disabled = false;
+  resultGuideMoreButton.textContent = 'More from your guide nearby';
+
   if (result.guideExcerpt) {
     resultGuideText.textContent = result.guideExcerpt;
     resultGuideSection.classList.remove('hidden');
@@ -240,6 +379,53 @@ function renderResults(result) {
     resultNearbySection.classList.remove('hidden');
   } else {
     resultNearbySection.classList.add('hidden');
+  }
+}
+
+async function handleResultGuideMoreClick() {
+  if (!appState.lastTripId || !appState.position) return;
+
+  resultGuideMoreButton.disabled = true;
+  resultGuideMoreButton.textContent = 'Looking…';
+
+  try {
+    const params = new URLSearchParams({
+      tripId: appState.lastTripId,
+      lat: String(appState.position.lat),
+      lon: String(appState.position.lon),
+    });
+    const response = await fetch(`${API_BASE}/guide/nearby?${params}`);
+    if (!response.ok) {
+      throw new Error(`Guide lookup failed: ${response.status}`);
+    }
+
+    const { chunks } = await response.json();
+    // The single nearest chunk is already shown above as the main excerpt —
+    // exclude it here so "more" doesn't just repeat the same text.
+    const rest = Array.isArray(chunks) ? chunks.filter((c) => c.text !== resultGuideText.textContent) : [];
+
+    resultGuideMoreList.innerHTML = '';
+    if (rest.length === 0) {
+      resultGuideMoreButton.textContent = 'Nothing else nearby';
+      return;
+    }
+
+    rest.forEach((chunk) => {
+      const li = document.createElement('li');
+      li.className = 'flex flex-col gap-1 border-l-2 border-brass/40 pl-3';
+      li.innerHTML = `
+        <p class="font-body text-sm leading-relaxed text-chart/90">${chunk.text}</p>
+        <span class="font-data text-xs text-brass">${chunk.distance || ''}</span>
+      `;
+      resultGuideMoreList.appendChild(li);
+    });
+    resultGuideMoreList.classList.remove('hidden');
+    resultGuideMoreList.classList.add('flex');
+    resultGuideMoreButton.classList.add('hidden');
+  } catch (err) {
+    console.error('Guide lookup failed:', err);
+    resultGuideMoreButton.disabled = false;
+    resultGuideMoreButton.textContent = "Couldn't load more — try again";
   }
 }
 
@@ -275,6 +461,15 @@ function init() {
   tripButton.addEventListener('click', handleTripButtonClick);
   resultsCloseButton.addEventListener('click', closeResultsSheet);
   resultsBackdrop.addEventListener('click', closeResultsSheet);
+  resultGuideMoreButton.addEventListener('click', handleResultGuideMoreClick);
+
+  guideButton.addEventListener('click', openGuideSheet);
+  guideSheetCloseButton.addEventListener('click', closeGuideSheet);
+  guideBackdrop.addEventListener('click', closeGuideSheet);
+  guideSetTripButton.addEventListener('click', handleGuideSetTripButtonClick);
+  guideChooseFileButton.addEventListener('click', handleGuideChooseFileClick);
+  guideFileInput.addEventListener('change', handleGuideFileChange);
+  guideUploadButton.addEventListener('click', handleGuideUploadClick);
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -83,6 +83,7 @@ describe('handleIdentify', () => {
       confidence: number;
       nearby: Array<{ name: string; distance: string }>;
       guideExcerpt: string | null;
+      tripId: string | null;
     };
     expect(body.name).toBe('Statue of Liberty');
     expect(body.confidence).toBe(0.9);
@@ -91,6 +92,7 @@ describe('handleIdentify', () => {
 
     const trip = await env.DB.prepare('SELECT id FROM trips WHERE name = ?').bind('nyc-trip').first<{ id: string }>();
     expect(trip).not.toBeNull();
+    expect(body.tripId).toBe(trip!.id);
 
     const find = await env.DB.prepare('SELECT * FROM saved_finds WHERE trip_id = ?')
       .bind(trip!.id)
@@ -102,6 +104,16 @@ describe('handleIdentify', () => {
     // the backing sqlite file). head() confirms existence without a body.
     const stored = await env.PHOTOS.head(find!.photo_key);
     expect(stored).not.toBeNull();
+  });
+
+  it('returns a null tripId when no tripName is provided', async () => {
+    mockClaudeSuccess('Mystery Statue', 'No trip attached.', 0.5);
+
+    const response = await handleIdentify(postRequest(buildForm({})), env);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { tripId: string | null };
+    expect(body.tripId).toBeNull();
   });
 
   it('skips nearby enrichment entirely when no coordinates are provided', async () => {
