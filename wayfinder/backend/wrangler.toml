@@ -49,7 +49,7 @@ bucket_name = "wayfinder-guides"
 [vars]
 ENVIRONMENT = "development"
 MAX_PHOTO_UPLOAD_BYTES = "8388608"  # 8 MB cap on a single capture
-MAX_GUIDE_UPLOAD_BYTES = "20971520"  # 20 MB cap on a single travel-guide PDF upload
+MAX_GUIDE_UPLOAD_BYTES = "52428800"  # 50 MB cap on a single travel-guide upload (PDF or EPUB) — real guidebooks with cover art/illustrations routinely exceed 20MB
 CLOUDFLARE_ACCOUNT_ID = "946b6f72ba4124bb4d0ba7a1c9c6ea49"
 AI_GATEWAY_ID = "wayfinder-gateway"
 

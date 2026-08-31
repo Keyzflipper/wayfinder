@@ -92,10 +92,10 @@ export interface IdentifyResponse {
 
 export interface GuideUploadResponse {
   tripId: string;
-  totalPages: number;
+  totalSections: number; // PDF page count or EPUB spine-section count, depending on format
   chunksCreated: number;
   chunksGeocoded: number;
-  truncated: boolean; // true if the PDF had more chunks than a single upload processes — see routes/guide-upload.ts's MAX_CHUNKS
+  truncated: boolean; // true if the guide had more chunks than a single upload processes — see routes/guide-upload.ts's MAX_CHUNKS
 }
 
 export interface NearbyGuideChunkResult {

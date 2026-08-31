@@ -1,5 +1,6 @@
 import { env, fetchMock } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { strToU8, zipSync } from 'fflate';
 import { handleGuideUpload } from '../../src/routes/guide-upload';
 import { applySchema } from '../helpers';
 // `?arraybuffer` isn't an actual Vite import suffix — it silently resolves
@@ -30,10 +31,54 @@ function mockGeocode(lat: number, lon: number, confidence: number) {
     .reply(200, { type: 'FeatureCollection', features: [{ center: [lon, lat], relevance: confidence }] });
 }
 
-function buildForm(opts: { withPdf?: boolean; tripName?: string } = {}): FormData {
+// A minimal, valid, two-chapter EPUB built directly with fflate — an EPUB is
+// just a zip of XML/XHTML, so unlike the hand-built PDF fixture there's no
+// need for a binary file on disk with exact byte offsets.
+function buildTestEpub(): Uint8Array {
+  const containerXml = `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+  const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Test Guide</dc:title></metadata>
+  <manifest>
+    <item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chap2" href="chap2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="chap1"/>
+    <itemref idref="chap2"/>
+  </spine>
+</package>`;
+
+  const chap1 = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body>
+<h1>Independence Hall</h1>
+<p>Independence Hall is a historic building in Philadelphia, Pennsylvania.</p>
+</body></html>`;
+
+  const chap2 = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body>
+<h1>Planning Your Trip</h1>
+<p>Some general planning advice that doesn't name a specific place.</p>
+</body></html>`;
+
+  return zipSync({
+    'META-INF/container.xml': strToU8(containerXml),
+    'OEBPS/content.opf': strToU8(contentOpf),
+    'OEBPS/chap1.xhtml': strToU8(chap1),
+    'OEBPS/chap2.xhtml': strToU8(chap2),
+  });
+}
+
+function buildForm(opts: { file?: File | false; tripName?: string } = {}): FormData {
   const form = new FormData();
-  if (opts.withPdf !== false) {
-    form.set('pdf', new File([samplePdfBuffer], 'guide.pdf', { type: 'application/pdf' }));
+  if (opts.file !== false) {
+    form.set('file', opts.file ?? new File([samplePdfBuffer], 'guide.pdf', { type: 'application/pdf' }));
   }
   if (opts.tripName !== undefined) form.set('tripName', opts.tripName);
   return form;
@@ -48,10 +93,27 @@ describe('handleGuideUpload', () => {
     await applySchema();
   });
 
-  it('400s when no PDF is included', async () => {
-    const response = await handleGuideUpload(postRequest(buildForm({ withPdf: false, tripName: 'x' })), env);
+  it('400s when no file is included', async () => {
+    const response = await handleGuideUpload(postRequest(buildForm({ file: false, tripName: 'x' })), env);
     expect(response.status).toBe(400);
-    expect((await response.json()) as { error: string }).toMatchObject({ error: 'missing_pdf' });
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'missing_file' });
+  });
+
+  it('400s on an unsupported file type', async () => {
+    const form = buildForm({
+      file: new File(['just some text'], 'notes.txt', { type: 'text/plain' }),
+      tripName: 'x',
+    });
+    const response = await handleGuideUpload(postRequest(form), env);
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'unsupported_format' });
+  });
+
+  it('413s when the file exceeds MAX_GUIDE_UPLOAD_BYTES', async () => {
+    const tinyLimitEnv = { ...env, MAX_GUIDE_UPLOAD_BYTES: '10' };
+    const response = await handleGuideUpload(postRequest(buildForm({ tripName: 'x' })), tinyLimitEnv);
+    expect(response.status).toBe(413);
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'file_too_large' });
   });
 
   it('400s when tripName is missing', async () => {
@@ -67,7 +129,7 @@ describe('handleGuideUpload', () => {
   });
 
   it(
-    'extracts text, geocodes the chunk that names a place, and persists a chunk for both pages',
+    'extracts text from a PDF, geocodes the chunk that names a place, and persists a chunk for both pages',
     async () => {
       // Page 1 ("Independence Hall...") resolves to a place; page 2 ("Planning Your Trip...") doesn't.
       mockExtraction('Independence Hall, Philadelphia', 0.9);
@@ -79,12 +141,12 @@ describe('handleGuideUpload', () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
         tripId: string;
-        totalPages: number;
+        totalSections: number;
         chunksCreated: number;
         chunksGeocoded: number;
         truncated: boolean;
       };
-      expect(body.totalPages).toBe(2);
+      expect(body.totalSections).toBe(2);
       expect(body.chunksCreated).toBe(2);
       expect(body.chunksGeocoded).toBe(1);
       expect(body.truncated).toBe(false);
@@ -107,7 +169,40 @@ describe('handleGuideUpload', () => {
     }
   );
 
-  it('stores the raw PDF in the GUIDES bucket', async () => {
+  it('extracts text from an EPUB in spine order and strips HTML tags', async () => {
+    mockExtraction('Independence Hall, Philadelphia', 0.9);
+    mockGeocode(39.9489, -75.1503, 0.87);
+    mockExtraction(null, 0);
+
+    const epubFile = new File([buildTestEpub()], 'guide.epub', { type: 'application/epub+zip' });
+    const response = await handleGuideUpload(postRequest(buildForm({ file: epubFile, tripName: 'epub-trip' })), env);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { tripId: string; totalSections: number; chunksCreated: number };
+    expect(body.totalSections).toBe(2);
+    expect(body.chunksCreated).toBe(2);
+
+    const rows = await env.DB.prepare('SELECT source_page, text FROM guide_chunks WHERE trip_id = ? ORDER BY source_page')
+      .bind(body.tripId)
+      .all<{ source_page: number; text: string }>();
+
+    expect(rows.results?.[0]?.text).toContain('Independence Hall');
+    expect(rows.results?.[0]?.text).not.toContain('<h1>');
+    expect(rows.results?.[0]?.text).not.toContain('<p>');
+    expect(rows.results?.[1]?.text).toContain('Planning Your Trip');
+  });
+
+  it('detects EPUB by filename when the browser sends no/generic content type', async () => {
+    mockExtraction(null, 0);
+    mockExtraction(null, 0);
+
+    const epubFile = new File([buildTestEpub()], 'guide.epub', { type: '' });
+    const response = await handleGuideUpload(postRequest(buildForm({ file: epubFile, tripName: 'epub-sniff-trip' })), env);
+
+    expect(response.status).toBe(200);
+  });
+
+  it('stores the raw file in the GUIDES bucket with the right extension', async () => {
     mockExtraction('Independence Hall, Philadelphia', 0.9);
     mockGeocode(39.9489, -75.1503, 0.87);
     mockExtraction(null, 0);

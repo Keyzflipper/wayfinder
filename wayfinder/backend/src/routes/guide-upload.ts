@@ -1,13 +1,20 @@
 // routes/guide-upload.ts — POST /api/guide
 //
-// Flow: parse FormData -> extract PDF text via unpdf (fail-loud: a guide
-// with no readable text is useless, mirrors identify.ts's Claude Vision
-// failure handling) -> only on success: persist the PDF to R2 -> chunk
-// each page's text -> for each chunk (up to MAX_CHUNKS), ask Claude for
-// the one specific place it's about, then geocode that place via Mapbox
+// Flow: parse FormData -> extract text from a PDF (unpdf) or EPUB (lib/epub.ts)
+// (fail-loud: a guide with no readable text is useless, mirrors identify.ts's
+// Claude Vision failure handling) -> only on success: persist the file to R2
+// -> chunk each unit's text -> for each chunk (up to MAX_CHUNKS), ask Claude
+// for the one specific place it's about, then geocode that place via Mapbox
 // (both steps degrade-gracefully per-chunk — see lib/claude.ts and
 // lib/mapbox.ts's never-throw contracts for extractPlaceName/geocodePlaceName)
 // -> batch-insert all chunks into guide_chunks.
+//
+// PDF and EPUB extraction both reduce to the same shape — an ordered list of
+// unit texts (PDF pages, EPUB spine sections) — so everything downstream of
+// extraction (chunking, geocoding, storage) is format-agnostic. guide_chunks'
+// source_page column holds a PDF page number or an EPUB spine index
+// depending on format; it's a 1-based position either way, not reused for
+// anything else, so no schema change was needed to support both.
 //
 // MAX_CHUNKS is deliberately conservative: each geocoded chunk costs two
 // subrequests (Claude + Mapbox), and Workers' Free plan caps a single
@@ -17,6 +24,7 @@
 
 import type { Env, GuideUploadResponse } from '../types';
 import { getDocumentProxy, extractText } from 'unpdf';
+import { extractEpubText } from '../lib/epub';
 import { extractPlaceName } from '../lib/claude';
 import { geocodePlaceName } from '../lib/mapbox';
 import { findOrCreateTrip } from '../lib/trips';
@@ -25,6 +33,8 @@ import { jsonError } from '../lib/http';
 const MAX_CHUNK_CHARS = 1500; // ~300-400 words — small enough for a focused single-place extraction, large enough to keep excerpts meaningful
 const MAX_CHUNKS = 20; // see file header
 const MIN_EXTRACTION_CONFIDENCE = 0.5; // below this, skip the geocoding call entirely rather than spend a subrequest on a low-confidence guess
+
+type GuideFormat = 'pdf' | 'epub';
 
 interface ChunkCandidate {
   sourcePage: number;
@@ -40,14 +50,19 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
     return jsonError(400, 'invalid_form', 'Could not parse multipart form data.');
   }
 
-  const pdf = form.get('pdf');
-  if (!(pdf instanceof File) || pdf.size === 0) {
-    return jsonError(400, 'missing_pdf', 'No PDF was included in the request.');
+  const file = form.get('file');
+  if (!(file instanceof File) || file.size === 0) {
+    return jsonError(400, 'missing_file', 'No guide file (PDF or EPUB) was included in the request.');
+  }
+
+  const format = detectGuideFormat(file);
+  if (format === null) {
+    return jsonError(400, 'unsupported_format', 'Guide must be a PDF or EPUB file.');
   }
 
   const maxBytes = Number(env.MAX_GUIDE_UPLOAD_BYTES);
-  if (pdf.size > maxBytes) {
-    return jsonError(413, 'pdf_too_large', `PDF exceeds the ${maxBytes}-byte limit.`);
+  if (file.size > maxBytes) {
+    return jsonError(413, 'file_too_large', `Guide exceeds the ${maxBytes}-byte limit.`);
   }
 
   const rawTripName = form.get('tripName');
@@ -57,23 +72,30 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
   }
 
   // ---- Extract text (fail-loud: an unreadable guide is useless) ----
-  const pdfBytes = await pdf.arrayBuffer();
+  const fileBytes = await file.arrayBuffer();
 
-  let totalPages: number;
-  let pageTexts: string[];
+  let totalSections: number;
+  let sectionTexts: string[];
   try {
-    // pdf.js takes ownership of the buffer backing the Uint8Array it's given
-    // — it transfers/detaches it internally rather than copying, so parsing
-    // silently zeroes out `pdfBytes` unless we hand it an independent copy.
-    // Confirmed empirically: without .slice(0) here, the R2 write below
-    // stores a 0-byte object every time.
-    const doc = await getDocumentProxy(new Uint8Array(pdfBytes.slice(0)));
-    const extracted = await extractText(doc, { mergePages: false });
-    totalPages = extracted.totalPages;
-    pageTexts = extracted.text;
+    if (format === 'pdf') {
+      // pdf.js takes ownership of the buffer backing the Uint8Array it's
+      // given — it transfers/detaches it internally rather than copying, so
+      // parsing silently zeroes out `fileBytes` unless we hand it an
+      // independent copy. Confirmed empirically: without .slice(0) here,
+      // the R2 write below stores a 0-byte object every time. fflate (the
+      // EPUB path) doesn't have this behavior, so it needs no such copy.
+      const doc = await getDocumentProxy(new Uint8Array(fileBytes.slice(0)));
+      const extracted = await extractText(doc, { mergePages: false });
+      totalSections = extracted.totalPages;
+      sectionTexts = extracted.text;
+    } else {
+      const extracted = await extractEpubText(fileBytes);
+      totalSections = extracted.totalSections;
+      sectionTexts = extracted.sectionTexts;
+    }
   } catch (err) {
-    console.error('PDF text extraction failed:', err);
-    return jsonError(502, 'pdf_parse_failed', "Couldn't read that PDF. Try a different file.");
+    console.error(`Guide text extraction failed (${format}):`, err);
+    return jsonError(502, 'guide_parse_failed', "Couldn't read that guide. Try a different file.");
   }
 
   // ---- Only now: persist ----
@@ -85,15 +107,17 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
   // replaces its prior chunks rather than accumulating alongside them.
   await env.DB.prepare('DELETE FROM guide_chunks WHERE trip_id = ?').bind(tripId).run();
 
-  const guideKey = `${tripId}/${crypto.randomUUID()}.pdf`;
-  await env.GUIDES.put(guideKey, pdfBytes, {
-    httpMetadata: { contentType: pdf.type || 'application/pdf' },
+  const extension = format === 'pdf' ? 'pdf' : 'epub';
+  const defaultContentType = format === 'pdf' ? 'application/pdf' : 'application/epub+zip';
+  const guideKey = `${tripId}/${crypto.randomUUID()}.${extension}`;
+  await env.GUIDES.put(guideKey, fileBytes, {
+    httpMetadata: { contentType: file.type || defaultContentType },
   });
 
-  // ---- Chunk every page's text ----
+  // ---- Chunk every section's text ----
   const allCandidates: ChunkCandidate[] = [];
-  pageTexts.forEach((pageText, index) => {
-    for (const chunkText of chunkPageText(pageText, MAX_CHUNK_CHARS)) {
+  sectionTexts.forEach((sectionText, index) => {
+    for (const chunkText of chunkPageText(sectionText, MAX_CHUNK_CHARS)) {
       allCandidates.push({ sourcePage: index + 1, text: chunkText });
     }
   });
@@ -140,7 +164,7 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
 
   const response: GuideUploadResponse = {
     tripId,
-    totalPages,
+    totalSections,
     chunksCreated: rows.length,
     chunksGeocoded: rows.filter((r) => r.lat !== null).length,
     truncated,
@@ -153,6 +177,13 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
 }
 
 // ---- Helpers ----
+
+function detectGuideFormat(file: File): GuideFormat | null {
+  const name = file.name.toLowerCase();
+  if (file.type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (file.type === 'application/epub+zip' || name.endsWith('.epub')) return 'epub';
+  return null;
+}
 
 // Greedily packs paragraphs (blank-line-separated) up to maxChars per
 // chunk. A single paragraph longer than maxChars on its own gets hard-split

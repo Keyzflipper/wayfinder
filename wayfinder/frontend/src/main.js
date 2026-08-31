@@ -337,7 +337,7 @@ async function handleGuideUploadClick() {
 
   try {
     const formData = new FormData();
-    formData.append('pdf', appState.selectedGuideFile);
+    formData.append('file', appState.selectedGuideFile);
     formData.append('tripName', appState.activeTripName);
 
     const response = await fetch(`${API_BASE}/guide`, {
@@ -346,7 +346,18 @@ async function handleGuideUploadClick() {
     });
 
     if (!response.ok) {
-      throw new Error(`Guide upload failed: ${response.status}`);
+      // Surface the server's actual reason (too large, unreadable file, etc.)
+      // instead of a generic message — a clean 4xx/5xx isn't a connection
+      // problem, and guessing wrong here just sends people down the wrong
+      // troubleshooting path.
+      let message = `Guide upload failed (${response.status}).`;
+      try {
+        const errorBody = await response.json();
+        if (errorBody?.message) message = errorBody.message;
+      } catch {
+        // Response wasn't JSON — keep the generic message.
+      }
+      throw new Error(message);
     }
 
     const result = await response.json();
@@ -354,13 +365,16 @@ async function handleGuideUploadClick() {
       ? '<p class="font-body text-xs text-seaglass mt-1">This guide had more than Wayfinder processes in one upload — only the first chunks were matched.</p>'
       : '';
     showGuideStatus(`
-      <p class="font-body text-sm text-chart">Guide added — ${result.chunksCreated} excerpt${result.chunksCreated === 1 ? '' : 's'} from ${result.totalPages} page${result.totalPages === 1 ? '' : 's'}, ${result.chunksGeocoded} matched to a place.</p>
+      <p class="font-body text-sm text-chart">Guide added — ${result.chunksCreated} excerpt${result.chunksCreated === 1 ? '' : 's'} from ${result.totalSections} section${result.totalSections === 1 ? '' : 's'}, ${result.chunksGeocoded} matched to a place.</p>
       ${truncatedNote}
     `);
     clearGuideFileSelection();
   } catch (err) {
     console.error('Guide upload failed:', err);
-    showGuideStatus('<p class="font-body text-sm text-rust">Couldn\'t upload that guide — check your connection and try again.</p>');
+    const message = err instanceof TypeError
+      ? "Couldn't upload that guide — check your connection and try again."
+      : err.message || "Couldn't upload that guide — check your connection and try again.";
+    showGuideStatus(`<p class="font-body text-sm text-rust">${message}</p>`);
     guideUploadButton.disabled = false;
   }
 }

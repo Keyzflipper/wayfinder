@@ -248,17 +248,17 @@
       <!-- Upload form -->
       <div id="guide-upload-form" class="hidden flex-col gap-3">
         <p class="font-body text-sm text-chart/70">
-          Upload a PDF travel guide for <span id="guide-upload-trip-name" class="text-chart font-medium"></span>. Wayfinder reads it and matches excerpts to what you photograph nearby.
+          Upload a travel guide (PDF or EPUB) for <span id="guide-upload-trip-name" class="text-chart font-medium"></span>. Wayfinder reads it and matches excerpts to what you photograph nearby.
         </p>
 
-        <input type="file" id="guide-file-input" accept="application/pdf" class="hidden" />
+        <input type="file" id="guide-file-input" accept="application/pdf,application/epub+zip,.pdf,.epub" class="hidden" />
 
         <button
           id="guide-choose-file-button"
           type="button"
           class="self-start font-body text-sm border border-chart/20 rounded-sm px-4 py-2 hover:border-brass hover:text-brass transition-colors"
         >
-          Choose PDF
+          Choose file
         </button>
 
         <p id="guide-selected-file" class="hidden font-data text-xs text-chart/60"></p>
