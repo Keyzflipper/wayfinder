@@ -48,6 +48,9 @@ const resultGuideMoreList = document.getElementById('result-guide-more-list');
 const resultNearbySection = document.getElementById('result-nearby');
 const resultNearbyList = document.getElementById('result-nearby-list');
 
+const resultRestaurantsButton = document.getElementById('result-restaurants-button');
+const resultRestaurantsList = document.getElementById('result-restaurants-list');
+
 const tripButton = document.getElementById('trip-button');
 const tripNameEl = document.getElementById('trip-name');
 
@@ -554,6 +557,63 @@ function renderResults(result) {
   } else {
     resultNearbySection.classList.add('hidden');
   }
+
+  resultRestaurantsList.innerHTML = '';
+  resultRestaurantsList.classList.add('hidden');
+  resultRestaurantsList.classList.remove('flex');
+  resultRestaurantsButton.classList.remove('hidden');
+  resultRestaurantsButton.disabled = false;
+  resultRestaurantsButton.textContent = 'Show good restaurants nearby';
+}
+
+async function handleResultRestaurantsClick() {
+  if (!appState.lastFindPosition) return;
+
+  resultRestaurantsButton.disabled = true;
+  resultRestaurantsButton.textContent = 'Looking…';
+
+  try {
+    const params = new URLSearchParams({
+      lat: String(appState.lastFindPosition.lat),
+      lon: String(appState.lastFindPosition.lon),
+    });
+    const response = await fetch(`${API_BASE}/restaurants?${params}`);
+    if (!response.ok) {
+      throw new Error(`Restaurants request failed: ${response.status}`);
+    }
+
+    const { restaurants } = await response.json();
+
+    resultRestaurantsList.innerHTML = '';
+    if (!Array.isArray(restaurants) || restaurants.length === 0) {
+      resultRestaurantsButton.textContent = 'No well-reviewed restaurants nearby';
+      return;
+    }
+
+    restaurants.forEach((restaurant) => {
+      const li = document.createElement('li');
+      li.className = 'flex items-center justify-between py-3';
+      const ratingLabel = `${restaurant.rating.toFixed(1)}★ (${restaurant.userRatingsTotal})`;
+      const meta = [ratingLabel, restaurant.priceLevel, restaurant.openNow === true ? 'Open now' : null]
+        .filter(Boolean)
+        .join(' · ');
+      li.innerHTML = `
+        <div class="flex flex-col">
+          <span class="font-body text-sm text-chart">${restaurant.name}</span>
+          <span class="font-body text-xs text-chart/60">${meta}</span>
+        </div>
+        <span class="font-data text-xs text-brass">${restaurant.distance || ''}</span>
+      `;
+      resultRestaurantsList.appendChild(li);
+    });
+    resultRestaurantsList.classList.remove('hidden');
+    resultRestaurantsList.classList.add('flex');
+    resultRestaurantsButton.classList.add('hidden');
+  } catch (err) {
+    console.error('Restaurants lookup failed:', err);
+    resultRestaurantsButton.disabled = false;
+    resultRestaurantsButton.textContent = "Couldn't load restaurants — try again";
+  }
 }
 
 async function handleResultGuideMoreClick() {
@@ -636,6 +696,7 @@ function init() {
   resultsCloseButton.addEventListener('click', closeResultsSheet);
   resultsBackdrop.addEventListener('click', closeResultsSheet);
   resultGuideMoreButton.addEventListener('click', handleResultGuideMoreClick);
+  resultRestaurantsButton.addEventListener('click', handleResultRestaurantsClick);
 
   guideButton.addEventListener('click', openGuideSheet);
   guideSheetCloseButton.addEventListener('click', closeGuideSheet);

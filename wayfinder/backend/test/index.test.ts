@@ -28,6 +28,11 @@ describe('Worker routing', () => {
     expect(response.status).toBe(400);
   });
 
+  it('GET /api/restaurants without coords 400s (route is wired up)', async () => {
+    const response = await SELF.fetch('https://worker.test/api/restaurants');
+    expect(response.status).toBe(400);
+  });
+
   it('wrong method on a known path 404s rather than 405ing', async () => {
     const response = await SELF.fetch('https://worker.test/api/identify', { method: 'GET' });
     expect(response.status).toBe(404);

@@ -188,6 +188,19 @@
         <ul id="result-nearby-list" class="flex flex-col divide-y divide-chart/10"></ul>
       </section>
 
+      <!-- Good restaurants nearby (lazy-loaded via Google Places on tap) -->
+      <section id="result-restaurants" class="flex flex-col gap-3">
+        <p class="font-body text-xs text-seaglass">Good restaurants nearby</p>
+        <button
+          id="result-restaurants-button"
+          type="button"
+          class="self-start font-data text-xs text-brass hover:text-brass/70 transition-colors"
+        >
+          Show good restaurants nearby
+        </button>
+        <ul id="result-restaurants-list" class="hidden flex-col divide-y divide-chart/10"></ul>
+      </section>
+
     </div>
   </div>
 

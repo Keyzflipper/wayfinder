@@ -15,6 +15,7 @@ export default defineWorkersConfig({
           bindings: {
             ANTHROPIC_API_KEY: 'test-anthropic-key',
             MAPBOX_TOKEN: 'test-mapbox-token',
+            GOOGLE_PLACES_API_KEY: 'test-google-places-key',
             CLOUDFLARE_ACCOUNT_ID: 'test-account-id',
             AI_GATEWAY_ID: 'test-gateway-id',
           },

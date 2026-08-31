@@ -8,6 +8,7 @@ Personal-scope PWA: single-user, no auth, built to run entirely on Cloudflare's 
 
 - **Identify** — snap a photo, Claude Vision names it and gives a couple sentences of context
 - **Nearby** — Mapbox surfaces points of interest around your current location
+- **Good restaurants nearby** — Google Places surfaces well-reviewed restaurants near a find, ranked by rating and review count, not just proximity
 - **Travel guides** — upload a PDF for a trip; Wayfinder extracts its text, asks Claude to find the one specific place each excerpt is about, geocodes it via Mapbox, and matches excerpts against wherever you're standing when you take a photo
 - **Trips** — every identify and guide upload is scoped to a trip; browse past finds with their photos, or switch trips, from one sheet
 - **Offline-aware PWA** — installable, with a service worker that keeps the app shell available and degrades gracefully without a connection
@@ -22,6 +23,7 @@ One Cloudflare Worker serves both the API and the static frontend from the same 
 | **Data** | D1 (trips, saved finds, guide chunks), R2 (photos, guide PDFs) |
 | **Vision / text** | Claude — Sonnet for photo identification, Haiku for guide-chunk place extraction — routed through Cloudflare AI Gateway |
 | **Maps** | Mapbox — Tilequery for nearby POIs, Geocoding for guide-chunk place names |
+| **Restaurant ratings** | Google Places — Nearby Search, filtered by rating and review count |
 | **PDF parsing** | [unpdf](https://github.com/unjs/unpdf) |
 | **Frontend** | Vanilla JS, no build step — Tailwind via CDN |
 | **Testing** | Vitest + `@cloudflare/vitest-pool-workers` — runs against real `workerd`, not a mock |
@@ -32,6 +34,7 @@ One Cloudflare Worker serves both the API and the static frontend from the same 
 |---|---|---|
 | `/api/identify` | POST | Photo → Claude Vision identification + nearby POIs + guide match |
 | `/api/nearby` | GET | Standalone POI lookup by coordinates |
+| `/api/restaurants` | GET | Well-reviewed restaurants near coordinates |
 | `/api/guide` | POST | Upload a PDF guide for a trip |
 | `/api/guide/nearby` | GET | Ranked guide-chunk search by coordinates |
 | `/api/trips` | GET | List trips, most recently active first |
@@ -66,7 +69,10 @@ Create `.dev.vars` (gitignored — never commit this) with your own keys:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 MAPBOX_TOKEN=pk....
+GOOGLE_PLACES_API_KEY=AIza...
 ```
+
+`GOOGLE_PLACES_API_KEY` needs the **Places API** enabled on a Google Cloud project with billing on file (Nearby Search isn't available on Google's no-billing free tier).
 
 Fill in `wrangler.toml`'s `database_id` (from `wrangler d1 create wayfinder-db`) and `CLOUDFLARE_ACCOUNT_ID` (from `wrangler whoami`). You'll also need an AI Gateway matching `AI_GATEWAY_ID` — create one in the dashboard (**AI → AI Gateway**) with the same name, and turn its **Authenticated Gateway** setting off (this app authenticates to Anthropic directly via `ANTHROPIC_API_KEY`, not through the gateway's own token).
 
@@ -91,5 +97,6 @@ R2 needs to be enabled on the account once (dashboard → **Storage & databases 
 npm run db:schema:remote
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put MAPBOX_TOKEN
+npx wrangler secret put GOOGLE_PLACES_API_KEY
 npm run deploy
 ```

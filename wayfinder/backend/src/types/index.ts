@@ -23,6 +23,7 @@ export interface Env {
   // store the key itself.
   ANTHROPIC_API_KEY: string;
   MAPBOX_TOKEN: string;
+  GOOGLE_PLACES_API_KEY: string;
 
   // ---- Vars ----
   // Set in wrangler.toml [vars] — plain config, safe to commit.
@@ -102,6 +103,16 @@ export interface NearbyGuideChunkResult {
   text: string;
   sourcePage: number | null;
   distance: string; // pre-formatted, same convention as NearbyPlace.distance
+}
+
+export interface NearbyRestaurant {
+  name: string;
+  rating: number;
+  userRatingsTotal: number;
+  priceLevel: string | null; // "$".."$$$$" — pre-formatted, same convention as NearbyPlace.distance
+  address: string | null;
+  distance: string;
+  openNow: boolean | null;
 }
 
 export interface TripSummary {
