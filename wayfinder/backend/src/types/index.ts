@@ -103,3 +103,22 @@ export interface NearbyGuideChunkResult {
   sourcePage: number | null;
   distance: string; // pre-formatted, same convention as NearbyPlace.distance
 }
+
+export interface TripSummary {
+  id: string;
+  name: string;
+  findCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TripFindSummary {
+  id: string;
+  name: string | null;
+  detail: string | null;
+  confidence: number | null;
+  photoUrl: string; // GET /api/photos?key=... — the client never sees a raw R2 key
+  lat: number | null;
+  lon: number | null;
+  createdAt: string;
+}

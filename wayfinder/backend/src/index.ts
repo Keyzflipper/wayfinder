@@ -6,13 +6,17 @@
 // failures there).
 //
 // All routes below have real handlers now: /api/identify, /api/nearby,
-// /api/guide (upload), and /api/guide/nearby (lookup).
+// /api/guide (upload), /api/guide/nearby (lookup), /api/trips,
+// /api/finds, and /api/photos.
 
 import type { Env } from './types';
 import { handleIdentify } from './routes/identify';
 import { handleNearby } from './routes/nearby';
 import { handleGuideUpload } from './routes/guide-upload';
 import { handleGuideLookup } from './routes/guide-lookup';
+import { handleListTrips } from './routes/trips';
+import { handleListFinds } from './routes/finds';
+import { handleGetPhoto } from './routes/photo';
 
 // Wildcard origin: appropriate for a personal, single-user app with no
 // cookie-based auth. Revisit with an explicit allowlist if this ever
@@ -50,6 +54,18 @@ export default {
 
       if (url.pathname === '/api/guide/nearby' && request.method === 'GET') {
         return withCors(await handleGuideLookup(request, env));
+      }
+
+      if (url.pathname === '/api/trips' && request.method === 'GET') {
+        return withCors(await handleListTrips(env));
+      }
+
+      if (url.pathname === '/api/finds' && request.method === 'GET') {
+        return withCors(await handleListFinds(request, env));
+      }
+
+      if (url.pathname === '/api/photos' && request.method === 'GET') {
+        return withCors(await handleGetPhoto(request, env));
       }
 
       return withCors(jsonResponse(404, { error: 'not_found', message: `No route for ${request.method} ${url.pathname}` }));

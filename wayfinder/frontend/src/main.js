@@ -67,15 +67,29 @@ const guideUploadButton = document.getElementById('guide-upload-button');
 
 const guideStatusEl = document.getElementById('guide-status');
 
-// ---- Trip state (client-side only, until D1 is wired up) ----
+const tripsSheet = document.getElementById('trips-sheet');
+const tripsBackdrop = document.getElementById('trips-backdrop');
+const tripsSheetCloseButton = document.getElementById('trips-sheet-close-button');
+
+const tripsListPane = document.getElementById('trips-list-pane');
+const newTripInput = document.getElementById('new-trip-input');
+const newTripSetButton = document.getElementById('new-trip-set-button');
+const tripsList = document.getElementById('trips-list');
+const tripsEmptyMessage = document.getElementById('trips-empty-message');
+
+const tripFindsPane = document.getElementById('trip-finds-pane');
+const tripFindsBackButton = document.getElementById('trip-finds-back-button');
+const tripFindsTitle = document.getElementById('trip-finds-title');
+const tripFindsList = document.getElementById('trip-finds-list');
+const tripFindsEmptyMessage = document.getElementById('trip-finds-empty-message');
+
+// ---- Trip state ----
 function renderTripName() {
   tripNameEl.textContent = appState.activeTripName || 'No trip set';
 }
 
-function handleTripButtonClick() {
-  const name = window.prompt('Trip name', appState.activeTripName || '');
-  if (name === null) return; // user cancelled
-  const trimmed = name.trim();
+function setActiveTrip(name) {
+  const trimmed = (name || '').trim();
   appState.activeTripName = trimmed.length > 0 ? trimmed : null;
   if (appState.activeTripName) {
     localStorage.setItem('wayfinder:activeTrip', appState.activeTripName);
@@ -84,6 +98,134 @@ function handleTripButtonClick() {
   }
   renderTripName();
   renderGuideSheetTripState();
+}
+
+// ---- Trips sheet ----
+function formatShortDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+async function openTripsSheet() {
+  showTripsListPane();
+  tripsSheet.classList.remove('translate-y-full');
+  tripsBackdrop.classList.remove('hidden');
+  await loadTripsList();
+}
+
+function closeTripsSheet() {
+  tripsSheet.classList.add('translate-y-full');
+  tripsBackdrop.classList.add('hidden');
+}
+
+function showTripsListPane() {
+  tripFindsPane.classList.add('hidden');
+  tripFindsPane.classList.remove('flex');
+  tripsListPane.classList.remove('hidden');
+  tripsListPane.classList.add('flex');
+}
+
+async function loadTripsList() {
+  tripsList.innerHTML = '<li class="py-3 font-body text-sm text-chart/50">Loading&hellip;</li>';
+  tripsEmptyMessage.classList.add('hidden');
+
+  try {
+    const response = await fetch(`${API_BASE}/trips`);
+    if (!response.ok) throw new Error(`Trips request failed: ${response.status}`);
+    const { trips } = await response.json();
+    renderTripsList(Array.isArray(trips) ? trips : []);
+  } catch (err) {
+    console.error('Loading trips failed:', err);
+    tripsList.innerHTML = '<li class="py-3 font-body text-sm text-rust">Couldn\'t load trips — check your connection.</li>';
+  }
+}
+
+function renderTripsList(trips) {
+  tripsList.innerHTML = '';
+
+  if (trips.length === 0) {
+    tripsEmptyMessage.classList.remove('hidden');
+    return;
+  }
+  tripsEmptyMessage.classList.add('hidden');
+
+  trips.forEach((trip) => {
+    const isActive = trip.name === appState.activeTripName;
+    const li = document.createElement('li');
+    li.className = 'flex items-center justify-between py-3 cursor-pointer hover:bg-chart/5 transition-colors';
+    li.innerHTML = `
+      <div class="flex flex-col">
+        <span class="font-body text-sm text-chart">${trip.name}${isActive ? ' <span class="text-brass">(active)</span>' : ''}</span>
+        <span class="font-body text-xs text-chart/60">${trip.findCount} find${trip.findCount === 1 ? '' : 's'}</span>
+      </div>
+      <span class="font-data text-xs text-seaglass">&rsaquo;</span>
+    `;
+    li.addEventListener('click', () => handleTripRowClick(trip));
+    tripsList.appendChild(li);
+  });
+}
+
+function handleTripRowClick(trip) {
+  setActiveTrip(trip.name);
+  showTripFinds(trip.id, trip.name);
+}
+
+function handleNewTripSetClick() {
+  const name = newTripInput.value;
+  if (!name || name.trim().length === 0) return;
+  setActiveTrip(name);
+  newTripInput.value = '';
+  loadTripsList();
+}
+
+async function showTripFinds(tripId, tripName) {
+  tripsListPane.classList.add('hidden');
+  tripsListPane.classList.remove('flex');
+  tripFindsPane.classList.remove('hidden');
+  tripFindsPane.classList.add('flex');
+
+  tripFindsTitle.textContent = tripName;
+  tripFindsList.innerHTML = '<li class="font-body text-sm text-chart/50">Loading&hellip;</li>';
+  tripFindsEmptyMessage.classList.add('hidden');
+
+  try {
+    const params = new URLSearchParams({ tripId });
+    const response = await fetch(`${API_BASE}/finds?${params}`);
+    if (!response.ok) throw new Error(`Finds request failed: ${response.status}`);
+    const { finds } = await response.json();
+    renderTripFindsList(Array.isArray(finds) ? finds : []);
+  } catch (err) {
+    console.error('Loading finds failed:', err);
+    tripFindsList.innerHTML = '<li class="font-body text-sm text-rust">Couldn\'t load finds — check your connection.</li>';
+  }
+}
+
+function renderTripFindsList(finds) {
+  tripFindsList.innerHTML = '';
+
+  if (finds.length === 0) {
+    tripFindsEmptyMessage.classList.remove('hidden');
+    return;
+  }
+  tripFindsEmptyMessage.classList.add('hidden');
+
+  finds.forEach((find) => {
+    const li = document.createElement('li');
+    li.className = 'flex gap-3';
+    li.innerHTML = `
+      <img src="${find.photoUrl}" alt="" class="h-16 w-16 rounded-sm object-cover flex-shrink-0 bg-chart/10" loading="lazy" />
+      <div class="flex flex-col gap-0.5 min-w-0 justify-center">
+        <p class="font-body text-sm text-chart truncate">${find.name || 'Unidentified'}</p>
+        <p class="font-body text-xs text-chart/60 line-clamp-2">${find.detail || ''}</p>
+        <p class="font-data text-xs text-brass">${formatShortDate(find.createdAt)}</p>
+      </div>
+    `;
+    tripFindsList.appendChild(li);
+  });
+}
+
+function handleTripFindsBackClick() {
+  showTripsListPane();
+  loadTripsList();
 }
 
 // ---- Guide upload sheet ----
@@ -130,8 +272,8 @@ function closeGuideSheet() {
 }
 
 function handleGuideSetTripButtonClick() {
-  handleTripButtonClick();
-  renderGuideSheetTripState();
+  closeGuideSheet();
+  openTripsSheet();
 }
 
 function handleGuideChooseFileClick() {
@@ -458,7 +600,7 @@ function init() {
   cameraRetryButton.addEventListener('click', initCamera);
   gpsStripEl.addEventListener('click', handleGpsStripClick);
   shutterButton.addEventListener('click', handleShutterClick);
-  tripButton.addEventListener('click', handleTripButtonClick);
+  tripButton.addEventListener('click', openTripsSheet);
   resultsCloseButton.addEventListener('click', closeResultsSheet);
   resultsBackdrop.addEventListener('click', closeResultsSheet);
   resultGuideMoreButton.addEventListener('click', handleResultGuideMoreClick);
@@ -470,6 +612,14 @@ function init() {
   guideChooseFileButton.addEventListener('click', handleGuideChooseFileClick);
   guideFileInput.addEventListener('change', handleGuideFileChange);
   guideUploadButton.addEventListener('click', handleGuideUploadClick);
+
+  tripsSheetCloseButton.addEventListener('click', closeTripsSheet);
+  tripsBackdrop.addEventListener('click', closeTripsSheet);
+  newTripSetButton.addEventListener('click', handleNewTripSetClick);
+  newTripInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleNewTripSetClick();
+  });
+  tripFindsBackButton.addEventListener('click', handleTripFindsBackClick);
 }
 
 document.addEventListener('DOMContentLoaded', init);
