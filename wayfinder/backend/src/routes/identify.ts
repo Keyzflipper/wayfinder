@@ -10,6 +10,7 @@
 import type { Env, IdentifyResponse, NearbyPlace } from '../types';
 import { identifyImage, ClaudeVisionError } from '../lib/claude';
 import { fetchNearbyPois } from '../lib/mapbox';
+import { formatDistance } from '../lib/format';
 
 const GUIDE_MATCH_RADIUS_METERS = 150; // tighter than the POI search radius — a guide excerpt should be about *this* spot, not the general area
 const EARTH_RADIUS_METERS = 6371000;
@@ -161,14 +162,6 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return EARTH_RADIUS_METERS * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// Presentation formatting lives at the route layer, not in mapbox.ts —
-// same separation-of-concerns call we made for lib/mapbox.ts. This will
-// likely move to a shared lib/format.ts once routes/nearby.ts needs it too.
-function formatDistance(meters: number): string {
-  if (meters < 1000) return `${Math.round(meters)}m`;
-  return `${(meters / 1000).toFixed(1)}km`;
 }
 
 function jsonError(status: number, error: string, message: string): Response {

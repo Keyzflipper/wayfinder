@@ -13,7 +13,7 @@ compatibility_flags = ["nodejs_compat"]  # needed for PDF parsing (pdf-parse.ts)
 [[d1_databases]]
 binding = "DB"
 database_name = "wayfinder-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "83f8e45f-d3d9-43cc-9790-9c22d6cb222c"
 
 # ============================================================
 # R2 — binary storage, split by lifecycle
@@ -41,7 +41,7 @@ bucket_name = "wayfinder-guides"
 [vars]
 ENVIRONMENT = "development"
 MAX_PHOTO_UPLOAD_BYTES = "8388608"  # 8 MB cap on a single capture
-CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_ACCOUNT_ID"
+CLOUDFLARE_ACCOUNT_ID = "946b6f72ba4124bb4d0ba7a1c9c6ea49"
 AI_GATEWAY_ID = "wayfinder-gateway"
 
 # ============================================================

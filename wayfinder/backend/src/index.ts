@@ -5,13 +5,13 @@
 // deliberately lets escape (see the `throw err` for non-ClaudeVisionError
 // failures there).
 //
-// Only /api/identify has a real handler right now. /api/nearby,
-// /api/guide, and /api/guide/nearby are planned but not yet built —
-// they correctly 404 until routes/nearby.ts, guide-upload.ts, and
-// guide-lookup.ts exist.
+// /api/identify and /api/nearby have real handlers. /api/guide and
+// /api/guide/nearby are planned but not yet built — they correctly 404
+// until guide-upload.ts and guide-lookup.ts exist.
 
 import type { Env } from './types';
 import { handleIdentify } from './routes/identify';
+import { handleNearby } from './routes/nearby';
 
 // Wildcard origin: appropriate for a personal, single-user app with no
 // cookie-based auth. Revisit with an explicit allowlist if this ever
@@ -37,6 +37,10 @@ export default {
 
       if (url.pathname === '/api/identify' && request.method === 'POST') {
         return withCors(await handleIdentify(request, env));
+      }
+
+      if (url.pathname === '/api/nearby' && request.method === 'GET') {
+        return withCors(await handleNearby(request, env));
       }
 
       return withCors(jsonResponse(404, { error: 'not_found', message: `No route for ${request.method} ${url.pathname}` }));
