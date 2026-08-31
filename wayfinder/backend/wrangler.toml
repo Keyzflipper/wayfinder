@@ -4,6 +4,17 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]  # needed for PDF parsing (pdf-parse.ts) in guide-upload.ts
 
 # ============================================================
+# Static assets — serves the PWA (../frontend) from this same Worker/
+# origin, which is why frontend/src/main.js can call the API via the
+# relative path "/api" instead of a separate cross-origin URL.
+# Requests that don't match a file here (every /api/* route) fall
+# through to the fetch handler in src/index.ts automatically — no
+# routing changes needed there.
+# ============================================================
+[assets]
+directory = "../frontend"
+
+# ============================================================
 # D1 — structured data (trips, saved_finds, guide_chunks)
 # `binding` name (DB) must match the Env interface in
 # src/types/index.ts once that file is written.

@@ -1,0 +1,13 @@
+/* styles.css — the handful of rules Tailwind's utility classes and CDN
+   Preflight don't cover: native-app tap/selection behavior for a PWA
+   shell. */
+
+html, body {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+button {
+  user-select: none;
+  -webkit-user-select: none;
+}
