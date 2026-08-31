@@ -11,9 +11,10 @@ import type { Env, IdentifyResponse, NearbyPlace } from '../types';
 import { identifyImage, ClaudeVisionError } from '../lib/claude';
 import { fetchNearbyPois } from '../lib/mapbox';
 import { formatDistance } from '../lib/format';
+import { findOrCreateTrip } from '../lib/trips';
+import { findNearbyGuideChunks } from '../lib/guideChunks';
 
 const GUIDE_MATCH_RADIUS_METERS = 150; // tighter than the POI search radius — a guide excerpt should be about *this* spot, not the general area
-const EARTH_RADIUS_METERS = 6371000;
 
 export async function handleIdentify(request: Request, env: Env): Promise<Response> {
   // ---- Parse incoming form ----
@@ -82,7 +83,8 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
     }));
 
     if (tripId !== null) {
-      guideExcerpt = await findNearbyGuideExcerpt(env, tripId, lat, lon);
+      const [nearest] = await findNearbyGuideChunks(env, tripId, lat, lon, { radiusMeters: GUIDE_MATCH_RADIUS_METERS, limit: 1 });
+      guideExcerpt = nearest?.text ?? null;
     }
   }
 
@@ -115,53 +117,6 @@ function parseOptionalCoords(form: FormData): { lat: number | null; lon: number 
     return { lat: null, lon: null };
   }
   return { lat, lon };
-}
-
-async function findOrCreateTrip(env: Env, name: string): Promise<string> {
-  const existing = await env.DB.prepare('SELECT id FROM trips WHERE name = ? LIMIT 1').bind(name).first<{ id: string }>();
-  if (existing) return existing.id;
-
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-  await env.DB.prepare('INSERT INTO trips (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
-    .bind(id, name, now, now)
-    .run();
-  return id;
-}
-
-async function findNearbyGuideExcerpt(env: Env, tripId: string, lat: number, lon: number): Promise<string | null> {
-  const latDelta = GUIDE_MATCH_RADIUS_METERS / 111320;
-  const lonDelta = GUIDE_MATCH_RADIUS_METERS / (111320 * Math.cos((lat * Math.PI) / 180));
-
-  const candidates = await env.DB.prepare(
-    `SELECT text, lat, lon FROM guide_chunks
-     WHERE trip_id = ? AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
-     LIMIT 20`
-  )
-    .bind(tripId, lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta)
-    .all<{ text: string; lat: number; lon: number }>();
-
-  if (!candidates.results || candidates.results.length === 0) return null;
-
-  let nearest: { text: string; distance: number } | null = null;
-  for (const row of candidates.results) {
-    const distance = haversineMeters(lat, lon, row.lat, row.lon);
-    if (distance <= GUIDE_MATCH_RADIUS_METERS && (nearest === null || distance < nearest.distance)) {
-      nearest = { text: row.text, distance };
-    }
-  }
-
-  return nearest?.text ?? null;
-}
-
-function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return EARTH_RADIUS_METERS * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function jsonError(status: number, error: string, message: string): Response {

@@ -159,6 +159,98 @@ function parseIdentification(rawText: string): ClaudeIdentification {
   return result;
 }
 
+// ---- Place-name extraction (guide_chunks geocoding) ----
+//
+// Contract: extractPlaceName() never throws, unlike identifyImage() above —
+// deliberately the opposite tradeoff. A single-photo identification failure
+// is the whole point of that request and has no honest fallback, so it must
+// surface. A guide upload runs this once per chunk (potentially dozens of
+// times), and one chunk's extraction failing is routine and unremarkable —
+// it just means that chunk doesn't get geocoded, same as if the chunk never
+// mentioned a specific place. Aborting the whole upload over it would be
+// wrong. See lib/mapbox.ts for the same never-throw reasoning.
+
+// haiku, not sonnet: this is a cheap, bulk, single-field classification
+// task run many times per upload, not the accuracy-critical core feature
+// identifyImage() is — see that function's MODEL comment for the same
+// cost/accuracy tradeoff made the other way.
+const EXTRACT_MODEL = 'claude-haiku-4-5-20251001';
+const EXTRACT_MAX_TOKENS = 150;
+const EXTRACT_TIMEOUT_MS = 10000;
+
+const EXTRACT_SYSTEM_PROMPT = `You read a short excerpt from a travel guide and identify the single specific, real-world place it is primarily about, if any — a named landmark, building, museum, restaurant, monument, or address that could be looked up on a map.
+
+Respond with ONLY a JSON object, no markdown code fences, no explanation before or after:
+{
+  "placeName": string | null — the place, written as a map-search-friendly query (include the city or country if the excerpt mentions one, to disambiguate common names). null if the excerpt doesn't center on one specific, mappable place — e.g. it's general travel advice, covers a whole region/city rather than one site, or names several unrelated places with no clear primary subject.
+  "confidence": number — 0.0 to 1.0, how confident you are that placeName (if not null) is correct and specific enough to geocode accurately.
+}
+
+Never omit a field. When in doubt, prefer null over a guess.`;
+
+export interface PlaceExtraction {
+  placeName: string | null;
+  confidence: number;
+}
+
+export async function extractPlaceName(env: Env, chunkText: string): Promise<PlaceExtraction> {
+  const NO_MATCH: PlaceExtraction = { placeName: null, confidence: 0 };
+  const url = `https://gateway.ai.cloudflare.com/v1/${env.CLOUDFLARE_ACCOUNT_ID}/${env.AI_GATEWAY_ID}/anthropic/v1/messages`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
+
+  try {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: EXTRACT_MODEL,
+          max_tokens: EXTRACT_MAX_TOKENS,
+          system: EXTRACT_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: chunkText }],
+        }),
+      });
+    } catch (err) {
+      console.warn('extractPlaceName: request failed to send — leaving this chunk ungeocoded.', err);
+      return NO_MATCH;
+    }
+
+    if (!response.ok) {
+      console.warn(`extractPlaceName: gateway returned ${response.status} — leaving this chunk ungeocoded.`);
+      return NO_MATCH;
+    }
+
+    const payload = await response.json().catch(() => null);
+    const textBlock = payload === null ? null : extractTextBlock(payload);
+    if (textBlock === null) return NO_MATCH;
+
+    const cleaned = textBlock.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      return NO_MATCH;
+    }
+
+    if (typeof parsed !== 'object' || parsed === null) return NO_MATCH;
+    const record = parsed as Record<string, unknown>;
+    const placeName = typeof record.placeName === 'string' && record.placeName.trim().length > 0 ? record.placeName.trim() : null;
+    const confidence = typeof record.confidence === 'number' && record.confidence >= 0 && record.confidence <= 1 ? record.confidence : 0;
+
+    return placeName === null ? NO_MATCH : { placeName, confidence };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Chunked to avoid "Maximum call stack size exceeded" from spreading a large
 // Uint8Array into String.fromCharCode(...bytes) — a real failure mode for
 // photo-sized buffers, not a theoretical one.

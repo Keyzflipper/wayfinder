@@ -1,7 +1,7 @@
 name = "wayfinder-api"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]  # needed for PDF parsing (pdf-parse.ts) in guide-upload.ts
+compatibility_flags = ["nodejs_compat"]  # needed for PDF parsing (unpdf) in routes/guide-upload.ts
 
 # ============================================================
 # Static assets — serves the PWA (../frontend) from this same Worker/
@@ -16,10 +16,7 @@ directory = "../frontend"
 
 # ============================================================
 # D1 — structured data (trips, saved_finds, guide_chunks)
-# `binding` name (DB) must match the Env interface in
-# src/types/index.ts once that file is written.
-# `database_id` is filled in after running `wrangler d1 create`
-# (see initialization commands, next step).
+# `binding` name (DB) must match the Env interface in src/types/index.ts.
 # ============================================================
 [[d1_databases]]
 binding = "DB"
@@ -52,6 +49,7 @@ bucket_name = "wayfinder-guides"
 [vars]
 ENVIRONMENT = "development"
 MAX_PHOTO_UPLOAD_BYTES = "8388608"  # 8 MB cap on a single capture
+MAX_GUIDE_UPLOAD_BYTES = "20971520"  # 20 MB cap on a single travel-guide PDF upload
 CLOUDFLARE_ACCOUNT_ID = "946b6f72ba4124bb4d0ba7a1c9c6ea49"
 AI_GATEWAY_ID = "wayfinder-gateway"
 

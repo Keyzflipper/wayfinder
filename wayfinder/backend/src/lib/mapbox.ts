@@ -1,12 +1,13 @@
-// lib/mapbox.ts — nearby point-of-interest lookup via Mapbox's Tilequery API.
+// lib/mapbox.ts — nearby point-of-interest lookup via Mapbox's Tilequery API,
+// plus forward geocoding (place name -> coordinates) via the Geocoding API.
 //
-// Contract: fetchNearbyPois() never throws. Any failure (network error,
-// non-OK response, rate limit) is caught and logged, returning [] instead.
-// This lets callers (routes/nearby.ts, and identify.ts when it merges
-// nearby data into a result) treat "no data" and "Mapbox is unavailable"
-// identically — no special-case error handling needed downstream, and the
-// Worker can still return a full identification result with an empty
-// `nearby` array rather than failing the whole request.
+// Contract: neither fetchNearbyPois() nor geocodePlaceName() ever throws.
+// Any failure (network error, non-OK response, rate limit) is caught and
+// logged, returning [] / null instead. This lets callers (routes/nearby.ts,
+// identify.ts, routes/guide-upload.ts) treat "no data" and "Mapbox is
+// unavailable" identically — no special-case error handling needed
+// downstream. For guide-upload.ts specifically, one chunk failing to
+// geocode should never abort processing the rest of the guide.
 
 import type { Env } from '../types';
 
@@ -89,6 +90,60 @@ export async function fetchNearbyPois(
       console.warn('Mapbox Tilequery request failed — proceeding without nearby data.', err);
     }
     return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ---- Forward geocoding (guide_chunks) ----
+
+const GEOCODE_TIMEOUT_MS = 5000;
+
+export interface GeocodedPlace {
+  lat: number;
+  lon: number;
+  confidence: number; // Mapbox's 0..1 "relevance" score for the top match
+}
+
+interface GeocodingFeature {
+  center: [number, number]; // [lon, lat]
+  relevance: number;
+}
+
+interface GeocodingResponse {
+  type: 'FeatureCollection';
+  features: GeocodingFeature[];
+}
+
+export async function geocodePlaceName(env: Env, placeName: string): Promise<GeocodedPlace | null> {
+  const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(placeName)}.json`);
+  url.searchParams.set('limit', '1');
+  url.searchParams.set('access_token', env.MAPBOX_TOKEN);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url.toString(), { signal: controller.signal });
+
+    if (!response.ok) {
+      console.warn(`Mapbox Geocoding returned ${response.status} for "${placeName}" — leaving this chunk ungeocoded.`);
+      return null;
+    }
+
+    const data = (await response.json()) as GeocodingResponse;
+    const top = data.features[0];
+    if (!top) return null;
+
+    const [lon, lat] = top.center;
+    return { lat, lon, confidence: top.relevance };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.warn(`Mapbox Geocoding timed out after ${GEOCODE_TIMEOUT_MS}ms for "${placeName}" — leaving this chunk ungeocoded.`);
+    } else {
+      console.warn(`Mapbox Geocoding request failed for "${placeName}" — leaving this chunk ungeocoded.`, err);
+    }
+    return null;
   } finally {
     clearTimeout(timeout);
   }

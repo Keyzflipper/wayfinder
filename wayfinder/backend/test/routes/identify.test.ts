@@ -1,26 +1,9 @@
 import { env, fetchMock } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { handleIdentify } from '../../src/routes/identify';
-// Vite's `?raw` suffix imports the file's contents as a string — lets the
-// test apply the real schema instead of hand-maintaining a duplicate.
-import schemaSql from '../../src/db/schema.sql?raw';
+import { applySchema } from '../helpers';
 
 const GATEWAY_PATH = '/v1/test-account-id/test-gateway-id/anthropic/v1/messages';
-
-async function applySchema(): Promise<void> {
-  // Strip full-line `--` comments first — otherwise a statement preceded by
-  // a comment block (every statement in schema.sql) keeps its leading `--`
-  // line after splitting on `;`, and D1 rejects it as a non-statement.
-  const withoutComments = schemaSql
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('--'))
-    .join('\n');
-  const statements = withoutComments
-    .split(';')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  await env.DB.batch(statements.map((s) => env.DB.prepare(s)));
-}
 
 function mockClaudeSuccess(name = 'Statue of Liberty', detail = 'A colossal neoclassical sculpture.', confidence = 0.9) {
   fetchMock

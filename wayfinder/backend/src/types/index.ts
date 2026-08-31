@@ -28,6 +28,7 @@ export interface Env {
   // Set in wrangler.toml [vars] — plain config, safe to commit.
   ENVIRONMENT: 'development' | 'production';
   MAX_PHOTO_UPLOAD_BYTES: string; // Wrangler vars are always strings; parse with Number() where used
+  MAX_GUIDE_UPLOAD_BYTES: string;
   // AI Gateway routing — combine into the gateway URL:
   // https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{AI_GATEWAY_ID}/anthropic/v1/messages
   CLOUDFLARE_ACCOUNT_ID: string;
@@ -85,4 +86,19 @@ export interface IdentifyResponse {
   guideExcerpt: string | null;
   nearby: NearbyPlace[];
   cachedAt: string; // maps to saved_finds.updated_at — lets the UI flag stale data
+}
+
+export interface GuideUploadResponse {
+  tripId: string;
+  totalPages: number;
+  chunksCreated: number;
+  chunksGeocoded: number;
+  truncated: boolean; // true if the PDF had more chunks than a single upload processes — see routes/guide-upload.ts's MAX_CHUNKS
+}
+
+export interface NearbyGuideChunkResult {
+  id: string;
+  text: string;
+  sourcePage: number | null;
+  distance: string; // pre-formatted, same convention as NearbyPlace.distance
 }

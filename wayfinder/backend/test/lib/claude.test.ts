@@ -1,6 +1,6 @@
 import { env, fetchMock } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { identifyImage, ClaudeVisionError } from '../../src/lib/claude';
+import { identifyImage, ClaudeVisionError, extractPlaceName } from '../../src/lib/claude';
 
 // Matches the gateway URL built in lib/claude.ts from the test bindings
 // set in vitest.config.ts (CLOUDFLARE_ACCOUNT_ID / AI_GATEWAY_ID).
@@ -76,5 +76,52 @@ describe('identifyImage', () => {
     });
 
     await expect(identifyImage(env, photoBytes, 'image/jpeg')).rejects.toThrow(/out-of-range confidence/);
+  });
+});
+
+describe('extractPlaceName', () => {
+  it('returns the extracted place and confidence on a well-formed response', async () => {
+    mockGatewayReply({
+      content: [{ type: 'text', text: JSON.stringify({ placeName: 'Independence Hall, Philadelphia', confidence: 0.9 }) }],
+    });
+
+    const result = await extractPlaceName(env, 'Independence Hall is where the Declaration was signed.');
+
+    expect(result).toEqual({ placeName: 'Independence Hall, Philadelphia', confidence: 0.9 });
+  });
+
+  it('returns null placeName and 0 confidence when the model finds no specific place', async () => {
+    mockGatewayReply({ content: [{ type: 'text', text: JSON.stringify({ placeName: null, confidence: 0 }) }] });
+
+    const result = await extractPlaceName(env, 'Pack comfortable shoes and bring water.');
+
+    expect(result).toEqual({ placeName: null, confidence: 0 });
+  });
+
+  it('never throws on a non-OK gateway response, degrades to no match', async () => {
+    mockGatewayReply('upstream exploded', 500);
+
+    await expect(extractPlaceName(env, 'some text')).resolves.toEqual({ placeName: null, confidence: 0 });
+  });
+
+  it('never throws when the response body is not valid JSON', async () => {
+    fetchMock
+      .get('https://gateway.ai.cloudflare.com')
+      .intercept({ method: 'POST', path: GATEWAY_PATH })
+      .reply(200, 'not json at all');
+
+    await expect(extractPlaceName(env, 'some text')).resolves.toEqual({ placeName: null, confidence: 0 });
+  });
+
+  it('never throws when required fields are missing from the model response', async () => {
+    mockGatewayReply({ content: [{ type: 'text', text: JSON.stringify({ confidence: 0.9 }) }] });
+
+    await expect(extractPlaceName(env, 'some text')).resolves.toEqual({ placeName: null, confidence: 0 });
+  });
+
+  it('treats a blank placeName string the same as null', async () => {
+    mockGatewayReply({ content: [{ type: 'text', text: JSON.stringify({ placeName: '   ', confidence: 0.9 }) }] });
+
+    await expect(extractPlaceName(env, 'some text')).resolves.toEqual({ placeName: null, confidence: 0 });
   });
 });
