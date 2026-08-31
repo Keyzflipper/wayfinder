@@ -41,12 +41,22 @@ export async function findNearbyGuideChunks(
   const latDelta = radiusMeters / 111320;
   const lonDelta = radiusMeters / (111320 * Math.cos((lat * Math.PI) / 180));
 
+  // ORDER BY a squared-distance approximation (not exact haversine — SQLite
+  // has no trig functions here) before the LIMIT. Without this, once a trip
+  // has more chunks in the bounding box than MAX_CANDIDATES, SQLite's
+  // arbitrary row order for an unordered LIMIT can drop the true nearest
+  // chunk from the candidate set entirely, before the exact haversine
+  // refine below ever sees it. The approximation only needs to rank
+  // correctly within this query's own small box (radiusMeters is capped
+  // well under a size where degree-space distortion matters), not compare
+  // across distant points.
   const candidates = await env.DB.prepare(
     `SELECT id, text, source_page, lat, lon FROM guide_chunks
      WHERE trip_id = ? AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+     ORDER BY (lat - ?) * (lat - ?) + (lon - ?) * (lon - ?)
      LIMIT ?`
   )
-    .bind(tripId, lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta, MAX_CANDIDATES)
+    .bind(tripId, lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta, lat, lat, lon, lon, MAX_CANDIDATES)
     .all<{ id: string; text: string; source_page: number | null; lat: number; lon: number }>();
 
   if (!candidates.results || candidates.results.length === 0) return [];

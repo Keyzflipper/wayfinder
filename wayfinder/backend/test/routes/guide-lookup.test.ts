@@ -47,6 +47,12 @@ describe('handleGuideLookup', () => {
     expect(response.status).toBe(400);
   });
 
+  it('400s on an empty-string lat instead of silently treating it as 0', async () => {
+    const response = await handleGuideLookup(request('?tripId=abc&lat=&lon=0'), env);
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'invalid_coords' });
+  });
+
   it('400s when radius exceeds the max', async () => {
     const response = await handleGuideLookup(request(`?tripId=abc&lat=${LAT}&lon=${LON}&radius=99999`), env);
     expect(response.status).toBe(400);

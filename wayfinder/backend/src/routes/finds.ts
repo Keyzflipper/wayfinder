@@ -5,6 +5,7 @@
 // GET /api/photos?key=... to actually fetch the image (routes/photo.ts).
 
 import type { Env, TripFindSummary } from '../types';
+import { jsonError } from '../lib/http';
 
 const MAX_FINDS = 200;
 
@@ -47,13 +48,6 @@ export async function handleListFinds(request: Request, env: Env): Promise<Respo
 
   return new Response(JSON.stringify({ finds }), {
     status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-function jsonError(status: number, error: string, message: string): Response {
-  return new Response(JSON.stringify({ error, message }), {
-    status,
     headers: { 'content-type': 'application/json' },
   });
 }

@@ -11,7 +11,8 @@ const appState = {
   position: null,       // { lat, lon, accuracy } | null
   activeTripName: localStorage.getItem('wayfinder:activeTrip') || null,
   lastPhotoBlob: null,
-  lastTripId: null,     // from the most recent /api/identify response — powers "More from your guide nearby"
+  lastTripId: null,        // from the most recent /api/identify response — powers "More from your guide nearby"
+  lastFindPosition: null,  // the position actually SENT with that request — not live `position`, which can drift before "more" is tapped
   selectedGuideFile: null,
 };
 
@@ -72,6 +73,9 @@ const tripsBackdrop = document.getElementById('trips-backdrop');
 const tripsSheetCloseButton = document.getElementById('trips-sheet-close-button');
 
 const tripsListPane = document.getElementById('trips-list-pane');
+const activeTripRow = document.getElementById('active-trip-row');
+const activeTripNameEl = document.getElementById('active-trip-name');
+const clearActiveTripButton = document.getElementById('clear-active-trip-button');
 const newTripInput = document.getElementById('new-trip-input');
 const newTripSetButton = document.getElementById('new-trip-set-button');
 const tripsList = document.getElementById('trips-list');
@@ -107,6 +111,7 @@ function formatShortDate(iso) {
 
 async function openTripsSheet() {
   showTripsListPane();
+  renderActiveTripRow();
   tripsSheet.classList.remove('translate-y-full');
   tripsBackdrop.classList.remove('hidden');
   await loadTripsList();
@@ -115,6 +120,23 @@ async function openTripsSheet() {
 function closeTripsSheet() {
   tripsSheet.classList.add('translate-y-full');
   tripsBackdrop.classList.add('hidden');
+}
+
+function renderActiveTripRow() {
+  if (appState.activeTripName) {
+    activeTripNameEl.textContent = appState.activeTripName;
+    activeTripRow.classList.remove('hidden');
+    activeTripRow.classList.add('flex');
+  } else {
+    activeTripRow.classList.add('hidden');
+    activeTripRow.classList.remove('flex');
+  }
+}
+
+function handleClearActiveTripClick() {
+  setActiveTrip(null);
+  renderActiveTripRow();
+  loadTripsList();
 }
 
 function showTripsListPane() {
@@ -166,6 +188,7 @@ function renderTripsList(trips) {
 
 function handleTripRowClick(trip) {
   setActiveTrip(trip.name);
+  renderActiveTripRow();
   showTripFinds(trip.id, trip.name);
 }
 
@@ -173,6 +196,7 @@ function handleNewTripSetClick() {
   const name = newTripInput.value;
   if (!name || name.trim().length === 0) return;
   setActiveTrip(name);
+  renderActiveTripRow();
   newTripInput.value = '';
   loadTripsList();
 }
@@ -225,6 +249,7 @@ function renderTripFindsList(finds) {
 
 function handleTripFindsBackClick() {
   showTripsListPane();
+  renderActiveTripRow();
   loadTripsList();
 }
 
@@ -442,9 +467,15 @@ async function handleShutterClick() {
     const formData = new FormData();
     formData.append('photo', photoBlob, 'capture.jpg');
     if (appState.activeTripName) formData.append('tripName', appState.activeTripName);
-    if (appState.position) {
-      formData.append('lat', String(appState.position.lat));
-      formData.append('lon', String(appState.position.lon));
+    // Snapshot now, not just read: appState.position keeps updating live via
+    // watchPosition, and handleResultGuideMoreClick needs the position that
+    // was actually SENT with this request, not wherever the device is by
+    // the time the user taps "more" — those can diverge if they walk while
+    // the results sheet is open.
+    const capturePosition = appState.position;
+    if (capturePosition) {
+      formData.append('lat', String(capturePosition.lat));
+      formData.append('lon', String(capturePosition.lon));
     }
 
     const response = await fetch(`${API_BASE}/identify`, {
@@ -458,6 +489,7 @@ async function handleShutterClick() {
 
     const result = await response.json();
     appState.lastTripId = result.tripId ?? null;
+    appState.lastFindPosition = capturePosition;
     renderResults(result);
     hideLoading();
     openResultsSheet();
@@ -484,7 +516,7 @@ function hideLoading() {
 function renderResults(result) {
   resultIdName.textContent = result.name || 'Unidentified';
   resultIdDetail.textContent = result.detail || '';
-  resultIdConfidence.textContent = result.confidence
+  resultIdConfidence.textContent = typeof result.confidence === 'number'
     ? `${Math.round(result.confidence * 100)}% confidence`
     : '';
 
@@ -525,7 +557,7 @@ function renderResults(result) {
 }
 
 async function handleResultGuideMoreClick() {
-  if (!appState.lastTripId || !appState.position) return;
+  if (!appState.lastTripId || !appState.lastFindPosition) return;
 
   resultGuideMoreButton.disabled = true;
   resultGuideMoreButton.textContent = 'Looking…';
@@ -533,8 +565,8 @@ async function handleResultGuideMoreClick() {
   try {
     const params = new URLSearchParams({
       tripId: appState.lastTripId,
-      lat: String(appState.position.lat),
-      lon: String(appState.position.lon),
+      lat: String(appState.lastFindPosition.lat),
+      lon: String(appState.lastFindPosition.lon),
     });
     const response = await fetch(`${API_BASE}/guide/nearby?${params}`);
     if (!response.ok) {
@@ -615,6 +647,7 @@ function init() {
 
   tripsSheetCloseButton.addEventListener('click', closeTripsSheet);
   tripsBackdrop.addEventListener('click', closeTripsSheet);
+  clearActiveTripButton.addEventListener('click', handleClearActiveTripClick);
   newTripSetButton.addEventListener('click', handleNewTripSetClick);
   newTripInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleNewTripSetClick();

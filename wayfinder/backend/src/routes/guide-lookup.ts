@@ -9,6 +9,7 @@
 import type { Env, NearbyGuideChunkResult } from '../types';
 import { findNearbyGuideChunks } from '../lib/guideChunks';
 import { formatDistance } from '../lib/format';
+import { jsonError, parseCoord, parsePositiveInt } from '../lib/http';
 
 const DEFAULT_RADIUS_METERS = 300;
 const MAX_RADIUS_METERS = 2000;
@@ -56,28 +57,6 @@ export async function handleGuideLookup(request: Request, env: Env): Promise<Res
 
   return new Response(JSON.stringify({ chunks }), {
     status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-// ---- Helpers ----
-
-function parseCoord(raw: string | null): number | null {
-  if (raw === null) return null;
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : null;
-}
-
-function parsePositiveInt(raw: string | null, fallback: number, max: number): number | null {
-  if (raw === null) return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0 || value > max) return null;
-  return value;
-}
-
-function jsonError(status: number, error: string, message: string): Response {
-  return new Response(JSON.stringify({ error, message }), {
-    status,
     headers: { 'content-type': 'application/json' },
   });
 }

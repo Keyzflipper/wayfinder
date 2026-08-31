@@ -22,6 +22,12 @@ describe('handleNearby', () => {
     expect(response.status).toBe(400);
   });
 
+  it('400s on an empty-string lat instead of silently treating it as 0', async () => {
+    const response = await handleNearby(request('?lat=&lon=-74.006'), env);
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'invalid_coords' });
+  });
+
   it('400s when lat is out of range', async () => {
     const response = await handleNearby(request('?lat=91&lon=0'), env);
     expect(response.status).toBe(400);

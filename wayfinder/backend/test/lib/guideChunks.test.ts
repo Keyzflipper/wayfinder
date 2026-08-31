@@ -84,4 +84,34 @@ describe('findNearbyGuideChunks', () => {
     const results = await findNearbyGuideChunks(env, tripId, LAT, LON, { radiusMeters: 200 });
     expect(results).toEqual([]);
   });
+
+  it('keeps the truly nearest chunks even when candidates exceed the SQL-level cap', async () => {
+    // MAX_CANDIDATES in guideChunks.ts is 100 — with fewer total rows than
+    // that, every candidate reaches the JS sort regardless of SQL ORDER BY,
+    // so this test wouldn't actually exercise the fix. Insert enough rows
+    // to force the SQL-level LIMIT to genuinely discard some candidates.
+    const tripId = await seedTrip('geo-trip-cap');
+    const now = new Date().toISOString();
+
+    // 100 chunks far from the query point, inserted FIRST — if the SQL
+    // query had no ORDER BY, SQLite's default (near-insertion-order) row
+    // selection for an unordered LIMIT would keep exactly these 100 and
+    // drop every chunk inserted after them.
+    const farStatements = Array.from({ length: 100 }, (_, i) =>
+      env.DB.prepare(
+        'INSERT INTO guide_chunks (id, trip_id, source_page, text, lat, lon, geocode_confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(crypto.randomUUID(), tripId, 1, `Far chunk ${i}`, LAT + 0.015, LON + 0.015, 0.9, now)
+    );
+    await env.DB.batch(farStatements);
+
+    // 5 chunks genuinely close to the query point, inserted AFTER the 100 far ones.
+    for (let i = 0; i < 5; i++) {
+      await seedChunk(tripId, `Near chunk ${i}`, LAT + i * 0.00001, LON);
+    }
+
+    const results = await findNearbyGuideChunks(env, tripId, LAT, LON, { radiusMeters: 200, limit: 5 });
+
+    expect(results).toHaveLength(5);
+    expect(results.every((r) => r.text.startsWith('Near chunk'))).toBe(true);
+  });
 });

@@ -6,6 +6,7 @@
 // not just a performance nicety.
 
 import type { Env } from '../types';
+import { jsonError } from '../lib/http';
 
 export async function handleGetPhoto(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -25,12 +26,5 @@ export async function handleGetPhoto(request: Request, env: Env): Promise<Respon
       'content-type': object.httpMetadata?.contentType ?? 'application/octet-stream',
       'cache-control': 'public, max-age=31536000, immutable',
     },
-  });
-}
-
-function jsonError(status: number, error: string, message: string): Response {
-  return new Response(JSON.stringify({ error, message }), {
-    status,
-    headers: { 'content-type': 'application/json' },
   });
 }

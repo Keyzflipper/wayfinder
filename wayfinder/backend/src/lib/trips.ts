@@ -4,20 +4,23 @@
 
 import type { Env } from '../types';
 
-// Touches `updated_at` on every call, not just creation — routes/trips.ts
-// orders the trip list by it to mean "most recently active", which is only
-// true if using an existing trip bumps it the same way creating one does.
+// Atomic upsert on name (relies on schema.sql's UNIQUE index on trips.name)
+// rather than a SELECT-then-branch — the latter has a real race window on
+// Workers, which can run concurrent requests against the same isolate: two
+// near-simultaneous calls for the same brand-new name could both pass a
+// SELECT before either INSERT commits, creating two trip rows with the same
+// name. ON CONFLICT DO UPDATE also means every call — not just creation —
+// bumps updated_at, which is what makes routes/trips.ts's "most recently
+// active first" ordering correct for reused trips, not just new ones.
 export async function findOrCreateTrip(env: Env, name: string): Promise<string> {
-  const existing = await env.DB.prepare('SELECT id FROM trips WHERE name = ? LIMIT 1').bind(name).first<{ id: string }>();
-  if (existing) {
-    await env.DB.prepare('UPDATE trips SET updated_at = ? WHERE id = ?').bind(new Date().toISOString(), existing.id).run();
-    return existing.id;
-  }
-
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  await env.DB.prepare('INSERT INTO trips (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
+  const row = await env.DB.prepare(
+    `INSERT INTO trips (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at
+     RETURNING id`
+  )
     .bind(id, name, now, now)
-    .run();
-  return id;
+    .first<{ id: string }>();
+  return row!.id;
 }

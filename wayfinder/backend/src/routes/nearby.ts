@@ -8,6 +8,7 @@
 import type { Env, NearbyPlace } from '../types';
 import { fetchNearbyPois } from '../lib/mapbox';
 import { formatDistance } from '../lib/format';
+import { jsonError, parseCoord, parsePositiveInt } from '../lib/http';
 
 const DEFAULT_RADIUS_METERS = 500;
 const MAX_RADIUS_METERS = 2000;
@@ -49,29 +50,6 @@ export async function handleNearby(request: Request, env: Env): Promise<Response
 
   return new Response(JSON.stringify({ nearby }), {
     status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-// ---- Helpers ----
-
-function parseCoord(raw: string | null): number | null {
-  if (raw === null) return null;
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : null;
-}
-
-// Returns `fallback` when `raw` is absent, `null` when `raw` is present but invalid.
-function parsePositiveInt(raw: string | null, fallback: number, max: number): number | null {
-  if (raw === null) return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0 || value > max) return null;
-  return value;
-}
-
-function jsonError(status: number, error: string, message: string): Response {
-  return new Response(JSON.stringify({ error, message }), {
-    status,
     headers: { 'content-type': 'application/json' },
   });
 }

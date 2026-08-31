@@ -297,6 +297,17 @@
 
       <!-- Trips list pane -->
       <div id="trips-list-pane" class="flex flex-col gap-4">
+        <div id="active-trip-row" class="hidden items-center justify-between">
+          <p class="font-body text-sm text-chart/70">On <span id="active-trip-name" class="text-chart font-medium"></span></p>
+          <button
+            id="clear-active-trip-button"
+            type="button"
+            class="font-data text-xs text-seaglass hover:text-rust transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+
         <div class="flex flex-col gap-2">
           <label for="new-trip-input" class="font-body text-xs text-seaglass">Start or switch to a trip</label>
           <div class="flex gap-2">

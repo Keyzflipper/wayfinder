@@ -178,4 +178,30 @@ describe('handleGuideUpload', () => {
     const count = await env.DB.prepare('SELECT COUNT(*) as n FROM trips WHERE name = ?').bind('already-exists-trip').first<{ n: number }>();
     expect(count?.n).toBe(1);
   });
+
+  it('replaces prior guide_chunks on re-upload instead of accumulating alongside them', async () => {
+    // First upload for this trip.
+    mockExtraction('Independence Hall, Philadelphia', 0.9);
+    mockGeocode(39.9489, -75.1503, 0.87);
+    mockExtraction(null, 0);
+    const first = await handleGuideUpload(postRequest(buildForm({ tripName: 're-upload-trip' })), env);
+    const firstBody = (await first.json()) as { tripId: string; chunksCreated: number };
+    expect(firstBody.chunksCreated).toBe(2);
+
+    // Re-upload the same PDF for the same trip.
+    mockExtraction('Independence Hall, Philadelphia', 0.9);
+    mockGeocode(39.9489, -75.1503, 0.87);
+    mockExtraction(null, 0);
+    const second = await handleGuideUpload(postRequest(buildForm({ tripName: 're-upload-trip' })), env);
+    const secondBody = (await second.json()) as { tripId: string; chunksCreated: number };
+
+    expect(secondBody.tripId).toBe(firstBody.tripId);
+    expect(secondBody.chunksCreated).toBe(2);
+
+    // Exactly the second upload's chunks should remain — not 4.
+    const count = await env.DB.prepare('SELECT COUNT(*) as n FROM guide_chunks WHERE trip_id = ?')
+      .bind(firstBody.tripId)
+      .first<{ n: number }>();
+    expect(count?.n).toBe(2);
+  });
 });

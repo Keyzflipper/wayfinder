@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS trips (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+-- Required for lib/trips.ts's findOrCreateTrip() to upsert atomically on
+-- name (INSERT ... ON CONFLICT(name)) instead of a racy SELECT-then-branch.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trips_name ON trips(name);
+
 -- ============================================================
 -- saved_finds
 -- One row per shutter capture: the photo, where it was taken,

@@ -20,6 +20,7 @@ import { getDocumentProxy, extractText } from 'unpdf';
 import { extractPlaceName } from '../lib/claude';
 import { geocodePlaceName } from '../lib/mapbox';
 import { findOrCreateTrip } from '../lib/trips';
+import { jsonError } from '../lib/http';
 
 const MAX_CHUNK_CHARS = 1500; // ~300-400 words — small enough for a focused single-place extraction, large enough to keep excerpts meaningful
 const MAX_CHUNKS = 20; // see file header
@@ -78,6 +79,12 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
   // ---- Only now: persist ----
   const tripId = await findOrCreateTrip(env, tripName);
 
+  // This app models one active guide per trip (guide_chunks isn't grouped by
+  // upload/guide id, and neither identify.ts's match nor guide-lookup.ts's
+  // search de-dupes across uploads) — so re-uploading for the same trip
+  // replaces its prior chunks rather than accumulating alongside them.
+  await env.DB.prepare('DELETE FROM guide_chunks WHERE trip_id = ?').bind(tripId).run();
+
   const guideKey = `${tripId}/${crypto.randomUUID()}.pdf`;
   await env.GUIDES.put(guideKey, pdfBytes, {
     httpMetadata: { contentType: pdf.type || 'application/pdf' },
@@ -107,21 +114,17 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
 
   for (const candidate of candidates) {
     const extraction = await extractPlaceName(env, candidate.text);
+    const shouldGeocode = extraction.placeName !== null && extraction.confidence >= MIN_EXTRACTION_CONFIDENCE;
+    const geocoded = shouldGeocode ? await geocodePlaceName(env, extraction.placeName as string) : null;
 
-    let lat: number | null = null;
-    let lon: number | null = null;
-    let geocodeConfidence: number | null = null;
-
-    if (extraction.placeName !== null && extraction.confidence >= MIN_EXTRACTION_CONFIDENCE) {
-      const geocoded = await geocodePlaceName(env, extraction.placeName);
-      if (geocoded !== null) {
-        lat = geocoded.lat;
-        lon = geocoded.lon;
-        geocodeConfidence = geocoded.confidence;
-      }
-    }
-
-    rows.push({ id: crypto.randomUUID(), sourcePage: candidate.sourcePage, text: candidate.text, lat, lon, geocodeConfidence });
+    rows.push({
+      id: crypto.randomUUID(),
+      sourcePage: candidate.sourcePage,
+      text: candidate.text,
+      lat: geocoded?.lat ?? null,
+      lon: geocoded?.lon ?? null,
+      geocodeConfidence: geocoded?.confidence ?? null,
+    });
   }
 
   if (rows.length > 0) {
@@ -191,11 +194,4 @@ function chunkPageText(pageText: string, maxChars: number): string[] {
 
   if (current.length > 0) chunks.push(current);
   return chunks;
-}
-
-function jsonError(status: number, error: string, message: string): Response {
-  return new Response(JSON.stringify({ error, message }), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }

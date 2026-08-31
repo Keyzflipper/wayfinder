@@ -13,6 +13,7 @@ import { fetchNearbyPois } from '../lib/mapbox';
 import { formatDistance } from '../lib/format';
 import { findOrCreateTrip } from '../lib/trips';
 import { findNearbyGuideChunks } from '../lib/guideChunks';
+import { jsonError } from '../lib/http';
 
 const GUIDE_MATCH_RADIUS_METERS = 150; // tighter than the POI search radius — a guide excerpt should be about *this* spot, not the general area
 
@@ -75,17 +76,22 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
   let guideExcerpt: string | null = null;
 
   if (lat !== null && lon !== null) {
-    const pois = await fetchNearbyPois(env, lat, lon);
+    // Independent lookups (Mapbox doesn't need tripId, D1 doesn't need Mapbox's
+    // result) — run concurrently rather than paying mapbox_latency + d1_latency
+    // in series on every identify request.
+    const [pois, guideMatches] = await Promise.all([
+      fetchNearbyPois(env, lat, lon),
+      tripId !== null
+        ? findNearbyGuideChunks(env, tripId, lat, lon, { radiusMeters: GUIDE_MATCH_RADIUS_METERS, limit: 1 })
+        : Promise.resolve([]),
+    ]);
+
     nearby = pois.map((poi) => ({
       name: poi.name,
       category: poi.category,
       distance: formatDistance(poi.distanceMeters),
     }));
-
-    if (tripId !== null) {
-      const [nearest] = await findNearbyGuideChunks(env, tripId, lat, lon, { radiusMeters: GUIDE_MATCH_RADIUS_METERS, limit: 1 });
-      guideExcerpt = nearest?.text ?? null;
-    }
+    guideExcerpt = guideMatches[0]?.text ?? null;
   }
 
   const response: IdentifyResponse = {
@@ -118,11 +124,4 @@ function parseOptionalCoords(form: FormData): { lat: number | null; lon: number 
     return { lat: null, lon: null };
   }
   return { lat, lon };
-}
-
-function jsonError(status: number, error: string, message: string): Response {
-  return new Response(JSON.stringify({ error, message }), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }

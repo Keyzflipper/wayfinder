@@ -38,4 +38,19 @@ describe('findOrCreateTrip', () => {
 
     expect(new Date(reused!.updated_at).getTime()).toBeGreaterThan(new Date(created!.updated_at).getTime());
   });
+
+  it('creates exactly one row when two calls for the same brand-new name race', async () => {
+    // Regression test for the race a SELECT-then-branch implementation has:
+    // both calls could see "no existing row" before either INSERT commits.
+    // The atomic upsert (INSERT ... ON CONFLICT) should make this safe
+    // regardless of ordering.
+    const [idA, idB] = await Promise.all([
+      findOrCreateTrip(env, 'racing-trip'),
+      findOrCreateTrip(env, 'racing-trip'),
+    ]);
+
+    expect(idA).toBe(idB);
+    const count = await env.DB.prepare('SELECT COUNT(*) as n FROM trips WHERE name = ?').bind('racing-trip').first<{ n: number }>();
+    expect(count?.n).toBe(1);
+  });
 });
