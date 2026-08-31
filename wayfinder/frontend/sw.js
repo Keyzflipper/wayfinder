@@ -2,7 +2,12 @@
 // Strategy: cache-first for the static app shell, network-first for /api/*,
 // with a dedicated offline fallback page for failed navigations.
 
-const CACHE_VERSION = 'wayfinder-v1';
+// Bump this whenever index.html/main.js/styles.css change — browsers detect
+// a service worker update by diffing sw.js's own bytes, not anything cached
+// inside it, so a version-only change here is what actually busts stale
+// shells for returning users. (Last bumped: guide-upload UI, "more nearby",
+// and the Trips/history view all landed without a bump — this catches up.)
+const CACHE_VERSION = 'wayfinder-v2';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
