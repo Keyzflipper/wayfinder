@@ -82,6 +82,22 @@ npm run db:schema:local   # apply the D1 schema locally
 npm run dev                # wrangler dev — serves the full app at :8787
 ```
 
+## Bulk-uploading guides
+
+Rather than selecting and uploading each guide by hand through the phone UI, drop PDF/EPUB files into `wayfinder/backend/guides/` (gitignored — it's a local drop folder, not a place to check files in) and run:
+
+```bash
+npm run guides:upload
+```
+
+Each file becomes its own trip, named after the filename (`Rome.pdf` → trip "Rome"). Pass `--trip "Name"` to upload every file in the folder under one shared trip instead, and `--url <baseUrl>` to target the deployed Worker instead of local dev (the default):
+
+```bash
+node scripts/upload-guides.mjs ./guides --url https://wayfinder-api.kokenziekw.workers.dev
+```
+
+It calls the same `/api/guide` endpoint the app does, so every file still goes through the real extraction/chunking/geocoding pipeline — this is a faster way to trigger that for a batch of files, not a way around it.
+
 ## Testing
 
 ```bash

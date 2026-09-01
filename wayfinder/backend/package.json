@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "db:schema:local": "wrangler d1 execute wayfinder-db --local --file=./src/db/schema.sql",
     "db:schema:remote": "wrangler d1 execute wayfinder-db --remote --file=./src/db/schema.sql",
-    "test:identify": "bash scripts/test-identify.sh"
+    "test:identify": "bash scripts/test-identify.sh",
+    "guides:upload": "node scripts/upload-guides.mjs"
   },
   "dependencies": {
     "fast-xml-parser": "^5.11.1",
