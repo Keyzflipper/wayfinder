@@ -1,6 +1,6 @@
 # Wayfinder
 
-Point your camera at something — Wayfinder identifies it, shows what's nearby, and pulls in any relevant excerpt from a travel guide you've uploaded for the trip.
+Point your camera at something — Wayfinder identifies it, shows what's nearby, and pulls in any relevant excerpt from a travel guide you've uploaded for the trip. Or just walk — walking mode narrates what's worth seeing and eating nearby on its own, no photo required.
 
 Personal-scope PWA: single-user, no auth, built to run entirely on Cloudflare's free tier.
 
@@ -10,7 +10,7 @@ Personal-scope PWA: single-user, no auth, built to run entirely on Cloudflare's 
 - **Nearby** — Mapbox surfaces points of interest around your current location
 - **Good restaurants nearby** — Google Places surfaces well-reviewed restaurants near a find, ranked by rating and review count, not just proximity
 - **Travel guides** — upload a PDF or EPUB for a trip; Wayfinder extracts its text, asks Claude to find the one specific place each excerpt is about, geocodes it via Mapbox, and matches excerpts against wherever you're standing when you take a photo
-- **Walking mode** — with a trip's guide loaded, Wayfinder checks your live GPS in the background as you walk and surfaces a nearby excerpt on its own (a chime + an auto-dismissing banner) — no photo required. Only works while the app/tab is open; a web app can't watch location once it's backgrounded or closed
+- **Walking mode** — checks your live GPS in the background as you walk and speaks up when something's worth knowing about: a guide excerpt (if a trip's guide is loaded), a notable nearby point of interest, or a well-reviewed restaurant — at most one at a time, spoken aloud (via the Web Speech API — plays through Bluetooth-connected glasses/headphones automatically, that's just normal OS audio routing) plus an auto-dismissing banner. No photo required, no guide required. Only works while the app/tab is open; a web app can't watch location once it's backgrounded or closed
 - **Trips** — every identify and guide upload is scoped to a trip; browse past finds with their photos, or switch trips, from one sheet
 - **Offline-aware PWA** — installable, with a service worker that keeps the app shell available and degrades gracefully without a connection
 
