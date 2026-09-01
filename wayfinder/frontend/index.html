@@ -67,6 +67,23 @@
     </div>
   </header>
 
+  <!-- ===== Passive discovery banner — surfaces a nearby guide excerpt as you
+       walk, no photo required. Auto-dismisses; tapping it dismisses early. ===== -->
+  <div
+    id="discovery-banner"
+    class="hidden fixed inset-x-4 z-30 items-start gap-3 rounded-sm bg-parchment text-chart px-4 py-3 shadow-lg cursor-pointer"
+    style="top: calc(env(safe-area-inset-top) + 3.5rem)"
+    role="status"
+    aria-live="polite"
+  >
+    <span class="h-2 w-2 rounded-full bg-brass mt-1.5 flex-shrink-0" aria-hidden="true"></span>
+    <div class="flex flex-col gap-0.5 min-w-0">
+      <p class="font-body text-xs text-seaglass">From your guide, nearby</p>
+      <p id="discovery-banner-text" class="font-body text-sm leading-snug"></p>
+    </div>
+    <span id="discovery-banner-distance" class="font-data text-xs text-brass flex-shrink-0 ml-auto"></span>
+  </div>
+
   <!-- ===== Camera viewfinder ===== -->
   <main class="relative h-full w-full">
     <video

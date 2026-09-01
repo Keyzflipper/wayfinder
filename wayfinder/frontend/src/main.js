@@ -10,10 +10,16 @@ const appState = {
   watchId: null,
   position: null,       // { lat, lon, accuracy } | null
   activeTripName: localStorage.getItem('wayfinder:activeTrip') || null,
+  activeTripId: null,       // resolved from a trip-sheet selection, a guide upload, or an identify response — not persisted, since it's just a D1 lookup away
   lastPhotoBlob: null,
   lastTripId: null,        // from the most recent /api/identify response — powers "More from your guide nearby"
   lastFindPosition: null,  // the position actually SENT with that request — not live `position`, which can drift before "more" is tapped
   selectedGuideFile: null,
+  // Passive discovery (walking mode): always on when a trip's guide chunks
+  // exist, throttled so it doesn't hit /api/guide/nearby on every GPS tick.
+  passiveLastCheckPosition: null,
+  passiveLastCheckAt: 0,
+  passiveAlertedChunkIds: new Set(),
 };
 
 // ---- DOM refs ----
@@ -90,6 +96,10 @@ const tripFindsTitle = document.getElementById('trip-finds-title');
 const tripFindsList = document.getElementById('trip-finds-list');
 const tripFindsEmptyMessage = document.getElementById('trip-finds-empty-message');
 
+const discoveryBanner = document.getElementById('discovery-banner');
+const discoveryBannerText = document.getElementById('discovery-banner-text');
+const discoveryBannerDistance = document.getElementById('discovery-banner-distance');
+
 // ---- Trip state ----
 function renderTripName() {
   tripNameEl.textContent = appState.activeTripName || 'No trip set';
@@ -103,8 +113,30 @@ function setActiveTrip(name) {
   } else {
     localStorage.removeItem('wayfinder:activeTrip');
   }
+  // The id, throttle position, and dedup set all belong to whichever trip
+  // was active when they were captured — switching trips invalidates them,
+  // otherwise passive discovery could compare against a different trip's
+  // guide chunks or skip re-alerting on a chunk it already alerted for
+  // under the previous trip.
+  appState.activeTripId = null;
+  appState.passiveLastCheckPosition = null;
+  appState.passiveLastCheckAt = 0;
+  appState.passiveAlertedChunkIds.clear();
   renderTripName();
   renderGuideSheetTripState();
+}
+
+async function resolveActiveTripId() {
+  if (!appState.activeTripName || appState.activeTripId) return;
+  try {
+    const response = await fetch(`${API_BASE}/trips`);
+    if (!response.ok) return;
+    const { trips } = await response.json();
+    const match = Array.isArray(trips) ? trips.find((t) => t.name === appState.activeTripName) : null;
+    if (match) appState.activeTripId = match.id;
+  } catch (err) {
+    console.warn('Could not resolve the active trip\'s id:', err);
+  }
 }
 
 // ---- Trips sheet ----
@@ -191,6 +223,7 @@ function renderTripsList(trips) {
 
 function handleTripRowClick(trip) {
   setActiveTrip(trip.name);
+  appState.activeTripId = trip.id; // known already — setActiveTrip() just cleared it, no need for resolveActiveTripId()
   renderActiveTripRow();
   showTripFinds(trip.id, trip.name);
 }
@@ -361,6 +394,12 @@ async function handleGuideUploadClick() {
     }
 
     const result = await response.json();
+    // Newly known (or re-confirmed) now that the guide's actually been
+    // processed — this is what lets passive discovery start checking
+    // /api/guide/nearby without the user having to open the trips sheet first.
+    appState.activeTripId = result.tripId;
+    appState.passiveAlertedChunkIds.clear();
+
     const truncatedNote = result.truncated
       ? '<p class="font-body text-xs text-seaglass mt-1">This guide had more than Wayfinder processes in one upload — only the first chunks were matched.</p>'
       : '';
@@ -428,6 +467,7 @@ function initGeolocation() {
         accuracy: pos.coords.accuracy,
       };
       renderGpsStrip();
+      maybeCheckPassiveDiscovery();
     },
     (err) => {
       console.warn('Geolocation error:', err);
@@ -458,6 +498,115 @@ function setGpsUnavailable(message) {
 function handleGpsStripClick() {
   if (appState.position === null) {
     initGeolocation();
+  }
+}
+
+// ---- Passive discovery ("walking mode") ----
+// Always on, no toggle: whenever a trip with guide chunks is active, walking
+// near one surfaces it without a photo. Throttled on both distance and time
+// so it doesn't hit /api/guide/nearby on every GPS tick.
+const PASSIVE_CHECK_MIN_INTERVAL_MS = 20000;
+const PASSIVE_CHECK_MIN_DISTANCE_METERS = 40;
+const PASSIVE_ALERT_RADIUS_METERS = 150;
+const PASSIVE_BANNER_DURATION_MS = 10000;
+
+const EARTH_RADIUS_METERS = 6371000;
+function distanceMeters(a, b) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h = sinLat * sinLat + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinLon * sinLon;
+  return EARTH_RADIUS_METERS * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function maybeCheckPassiveDiscovery() {
+  if (!appState.activeTripId || !appState.position) return;
+
+  const now = Date.now();
+  const here = { lat: appState.position.lat, lon: appState.position.lon };
+
+  if (appState.passiveLastCheckPosition) {
+    const moved = distanceMeters(appState.passiveLastCheckPosition, here);
+    const elapsed = now - appState.passiveLastCheckAt;
+    if (moved < PASSIVE_CHECK_MIN_DISTANCE_METERS && elapsed < PASSIVE_CHECK_MIN_INTERVAL_MS) return;
+  }
+
+  appState.passiveLastCheckPosition = here;
+  appState.passiveLastCheckAt = now;
+  runPassiveDiscoveryCheck(appState.activeTripId, here.lat, here.lon);
+}
+
+async function runPassiveDiscoveryCheck(tripId, lat, lon) {
+  try {
+    const params = new URLSearchParams({
+      tripId,
+      lat: String(lat),
+      lon: String(lon),
+      radius: String(PASSIVE_ALERT_RADIUS_METERS),
+      limit: '1',
+    });
+    const response = await fetch(`${API_BASE}/guide/nearby?${params}`);
+    if (!response.ok) return;
+
+    const { chunks } = await response.json();
+    const match = Array.isArray(chunks) ? chunks[0] : null;
+    if (!match || appState.passiveAlertedChunkIds.has(match.id)) return;
+
+    appState.passiveAlertedChunkIds.add(match.id);
+    playDiscoveryDing();
+    showDiscoveryBanner(match.text, match.distance);
+  } catch (err) {
+    // Passive and best-effort — a failed background check shouldn't
+    // interrupt anything the user's actively doing.
+    console.warn('Passive discovery check failed:', err);
+  }
+}
+
+function playDiscoveryDing() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 880; // a clean, short chime — not a jarring alert tone
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.4);
+    // Plays through whatever the device's current audio output is — no
+    // special handling needed for a Bluetooth-connected headset or glasses,
+    // that's ordinary OS audio routing, not something the app controls.
+    oscillator.onended = () => ctx.close();
+  } catch (err) {
+    console.warn('Could not play the discovery ding:', err);
+  }
+}
+
+let discoveryBannerTimeout = null;
+
+function showDiscoveryBanner(text, distance) {
+  discoveryBannerText.textContent = text;
+  discoveryBannerDistance.textContent = distance || '';
+  discoveryBanner.classList.remove('hidden');
+  discoveryBanner.classList.add('flex');
+
+  if (discoveryBannerTimeout) clearTimeout(discoveryBannerTimeout);
+  discoveryBannerTimeout = setTimeout(hideDiscoveryBanner, PASSIVE_BANNER_DURATION_MS);
+}
+
+function hideDiscoveryBanner() {
+  discoveryBanner.classList.add('hidden');
+  discoveryBanner.classList.remove('flex');
+  if (discoveryBannerTimeout) {
+    clearTimeout(discoveryBannerTimeout);
+    discoveryBannerTimeout = null;
   }
 }
 
@@ -506,6 +655,7 @@ async function handleShutterClick() {
 
     const result = await response.json();
     appState.lastTripId = result.tripId ?? null;
+    if (result.tripId) appState.activeTripId = result.tripId;
     appState.lastFindPosition = capturePosition;
     renderResults(result);
     hideLoading();
@@ -702,8 +852,10 @@ function init() {
   initCamera();
   initGeolocation();
   registerServiceWorker();
+  resolveActiveTripId(); // best-effort, so passive discovery can work on a returning visit without reopening the trips sheet
 
   cameraRetryButton.addEventListener('click', initCamera);
+  discoveryBanner.addEventListener('click', hideDiscoveryBanner);
   gpsStripEl.addEventListener('click', handleGpsStripClick);
   shutterButton.addEventListener('click', handleShutterClick);
   tripButton.addEventListener('click', openTripsSheet);
