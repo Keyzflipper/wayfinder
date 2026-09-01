@@ -15,11 +15,13 @@ const appState = {
   lastTripId: null,        // from the most recent /api/identify response — powers "More from your guide nearby"
   lastFindPosition: null,  // the position actually SENT with that request — not live `position`, which can drift before "more" is tapped
   selectedGuideFile: null,
-  // Passive discovery (walking mode): always on when a trip's guide chunks
-  // exist, throttled so it doesn't hit /api/guide/nearby on every GPS tick.
+  // Passive discovery (walking mode): always on whenever GPS is available —
+  // guide excerpts (if a trip's guide is loaded), notable nearby POIs, and
+  // well-reviewed restaurants all feed the same alert, throttled so it
+  // doesn't hit the API on every GPS tick.
   passiveLastCheckPosition: null,
   passiveLastCheckAt: 0,
-  passiveAlertedChunkIds: new Set(),
+  passiveAlertedIds: new Set(), // composite keys: "guide:<chunkId>", "poi:<name>", "restaurant:<name>:<address>"
 };
 
 // ---- DOM refs ----
@@ -97,6 +99,7 @@ const tripFindsList = document.getElementById('trip-finds-list');
 const tripFindsEmptyMessage = document.getElementById('trip-finds-empty-message');
 
 const discoveryBanner = document.getElementById('discovery-banner');
+const discoveryBannerLabel = document.getElementById('discovery-banner-label');
 const discoveryBannerText = document.getElementById('discovery-banner-text');
 const discoveryBannerDistance = document.getElementById('discovery-banner-distance');
 
@@ -121,7 +124,7 @@ function setActiveTrip(name) {
   appState.activeTripId = null;
   appState.passiveLastCheckPosition = null;
   appState.passiveLastCheckAt = 0;
-  appState.passiveAlertedChunkIds.clear();
+  appState.passiveAlertedIds.clear();
   renderTripName();
   renderGuideSheetTripState();
 }
@@ -398,7 +401,7 @@ async function handleGuideUploadClick() {
     // processed — this is what lets passive discovery start checking
     // /api/guide/nearby without the user having to open the trips sheet first.
     appState.activeTripId = result.tripId;
-    appState.passiveAlertedChunkIds.clear();
+    appState.passiveAlertedIds.clear();
 
     const truncatedNote = result.truncated
       ? '<p class="font-body text-xs text-seaglass mt-1">This guide had more than Wayfinder processes in one upload — only the first chunks were matched.</p>'
@@ -502,13 +505,26 @@ function handleGpsStripClick() {
 }
 
 // ---- Passive discovery ("walking mode") ----
-// Always on, no toggle: whenever a trip with guide chunks is active, walking
-// near one surfaces it without a photo. Throttled on both distance and time
-// so it doesn't hit /api/guide/nearby on every GPS tick.
+// Always on whenever GPS is available, no toggle. Every check cycle looks
+// at three sources in priority order — a guide excerpt (if a trip's guide
+// is loaded), a notable nearby point of interest, a well-reviewed nearby
+// restaurant — and surfaces at most ONE per cycle, spoken aloud, so walking
+// past a cluster of things doesn't fire off a stack of alerts at once.
+// Throttled on both distance and time so it doesn't hit the API on every
+// GPS tick.
 const PASSIVE_CHECK_MIN_INTERVAL_MS = 20000;
 const PASSIVE_CHECK_MIN_DISTANCE_METERS = 40;
-const PASSIVE_ALERT_RADIUS_METERS = 150;
+const PASSIVE_GUIDE_RADIUS_METERS = 150;
+const PASSIVE_POI_RADIUS_METERS = 100; // tighter than guide/restaurant — POIs are dense in cities, this keeps it to what's genuinely close
+const PASSIVE_RESTAURANT_RADIUS_METERS = 120;
 const PASSIVE_BANNER_DURATION_MS = 10000;
+const SPEECH_MAX_CHARS = 240; // a spoken excerpt this long already runs ~15-20s; the banner shows the rest for reading
+
+// Categories Mapbox Tilequery returns that aren't "worth looking at" for a
+// proactive alert — errand-running POIs, not sightseeing ones. Everything
+// else passes through; this is a denylist, not a curated allowlist, since
+// Tilequery's category vocabulary isn't fully known ahead of time.
+const POI_ALERT_DENYLIST = new Set(['bank', 'atm', 'convenience', 'parking', 'gas_station', 'pharmacy']);
 
 const EARTH_RADIUS_METERS = 6371000;
 function distanceMeters(a, b) {
@@ -522,7 +538,7 @@ function distanceMeters(a, b) {
 }
 
 function maybeCheckPassiveDiscovery() {
-  if (!appState.activeTripId || !appState.position) return;
+  if (!appState.position) return;
 
   const now = Date.now();
   const here = { lat: appState.position.lat, lon: appState.position.lon };
@@ -535,32 +551,124 @@ function maybeCheckPassiveDiscovery() {
 
   appState.passiveLastCheckPosition = here;
   appState.passiveLastCheckAt = now;
-  runPassiveDiscoveryCheck(appState.activeTripId, here.lat, here.lon);
+  runPassiveDiscoveryCheck(here.lat, here.lon);
 }
 
-async function runPassiveDiscoveryCheck(tripId, lat, lon) {
+async function fetchGuideAlert(lat, lon) {
+  if (!appState.activeTripId) return null;
+  const params = new URLSearchParams({
+    tripId: appState.activeTripId,
+    lat: String(lat),
+    lon: String(lon),
+    radius: String(PASSIVE_GUIDE_RADIUS_METERS),
+    limit: '1',
+  });
+  const response = await fetch(`${API_BASE}/guide/nearby?${params}`);
+  if (!response.ok) return null;
+
+  const { chunks } = await response.json();
+  const match = Array.isArray(chunks) ? chunks[0] : null;
+  if (!match) return null;
+
+  const id = `guide:${match.id}`;
+  if (appState.passiveAlertedIds.has(id)) return null;
+  return { id, label: 'From your guide, nearby', spoken: match.text, detail: match.text, distance: match.distance };
+}
+
+async function fetchPoiAlert(lat, lon) {
+  const params = new URLSearchParams({ lat: String(lat), lon: String(lon), radius: String(PASSIVE_POI_RADIUS_METERS), limit: '5' });
+  const response = await fetch(`${API_BASE}/nearby?${params}`);
+  if (!response.ok) return null;
+
+  const { nearby } = await response.json();
+  const match = Array.isArray(nearby) ? nearby.find((p) => !POI_ALERT_DENYLIST.has(p.category)) : null;
+  if (!match) return null;
+
+  const id = `poi:${match.name}`;
+  if (appState.passiveAlertedIds.has(id)) return null;
+  const categoryLabel = (match.category || 'a point of interest').replace(/_/g, ' ');
+  return {
+    id,
+    label: 'Worth a look, nearby',
+    spoken: `${match.name}, ${categoryLabel}, ${match.distance} away.`,
+    detail: `${match.name}${match.category ? ` — ${categoryLabel}` : ''}`,
+    distance: match.distance,
+  };
+}
+
+async function fetchRestaurantAlert(lat, lon) {
+  const params = new URLSearchParams({ lat: String(lat), lon: String(lon), radius: String(PASSIVE_RESTAURANT_RADIUS_METERS), limit: '1' });
+  const response = await fetch(`${API_BASE}/restaurants?${params}`);
+  if (!response.ok) return null;
+
+  const { restaurants } = await response.json();
+  const match = Array.isArray(restaurants) ? restaurants[0] : null;
+  if (!match) return null;
+
+  const id = `restaurant:${match.name}:${match.address || ''}`;
+  if (appState.passiveAlertedIds.has(id)) return null;
+  return {
+    id,
+    label: 'Good eats, nearby',
+    spoken: `${match.name}, a well-reviewed restaurant, ${match.distance} away.`,
+    detail: `${match.name} — ${match.rating.toFixed(1)}★ (${match.userRatingsTotal})`,
+    distance: match.distance,
+  };
+}
+
+async function runPassiveDiscoveryCheck(lat, lon) {
   try {
-    const params = new URLSearchParams({
-      tripId,
-      lat: String(lat),
-      lon: String(lon),
-      radius: String(PASSIVE_ALERT_RADIUS_METERS),
-      limit: '1',
-    });
-    const response = await fetch(`${API_BASE}/guide/nearby?${params}`);
-    if (!response.ok) return;
+    // Run all three in parallel for latency, then apply priority ordering —
+    // guide content is the user's own curated source, so it wins ties.
+    const [guideAlert, poiAlert, restaurantAlert] = await Promise.all([
+      fetchGuideAlert(lat, lon),
+      fetchPoiAlert(lat, lon),
+      fetchRestaurantAlert(lat, lon),
+    ]);
 
-    const { chunks } = await response.json();
-    const match = Array.isArray(chunks) ? chunks[0] : null;
-    if (!match || appState.passiveAlertedChunkIds.has(match.id)) return;
+    const alert = guideAlert || poiAlert || restaurantAlert;
+    if (!alert) return;
 
-    appState.passiveAlertedChunkIds.add(match.id);
-    playDiscoveryDing();
-    showDiscoveryBanner(match.text, match.distance);
+    appState.passiveAlertedIds.add(alert.id);
+    announceDiscovery(alert);
   } catch (err) {
     // Passive and best-effort — a failed background check shouldn't
     // interrupt anything the user's actively doing.
     console.warn('Passive discovery check failed:', err);
+  }
+}
+
+function announceDiscovery(alert) {
+  if (!speakDiscovery(alert.spoken)) {
+    playDiscoveryDing(); // speechSynthesis unavailable/failed — fall back to a plain chime
+  }
+  showDiscoveryBanner(alert.label, alert.detail, alert.distance);
+}
+
+function truncateForSpeech(text) {
+  if (text.length <= SPEECH_MAX_CHARS) return text;
+  const cut = text.slice(0, SPEECH_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${cut.slice(0, lastSpace > 0 ? lastSpace : SPEECH_MAX_CHARS)}…`;
+}
+
+function speakDiscovery(text) {
+  if (!window.speechSynthesis) return false;
+  try {
+    // Cancel rather than queue: if a second alert lands mid-utterance
+    // (unlikely given the throttle, but possible), the newer one should
+    // replace the older one, not play after it.
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(truncateForSpeech(text));
+    utterance.rate = 1.0;
+    // Plays through whatever the device's current audio output is — no
+    // special handling needed for a Bluetooth-connected headset or glasses,
+    // that's ordinary OS audio routing, not something the app controls.
+    window.speechSynthesis.speak(utterance);
+    return true;
+  } catch (err) {
+    console.warn('Speech synthesis failed:', err);
+    return false;
   }
 }
 
@@ -580,9 +688,6 @@ function playDiscoveryDing() {
     gain.connect(ctx.destination);
     oscillator.start();
     oscillator.stop(ctx.currentTime + 0.4);
-    // Plays through whatever the device's current audio output is — no
-    // special handling needed for a Bluetooth-connected headset or glasses,
-    // that's ordinary OS audio routing, not something the app controls.
     oscillator.onended = () => ctx.close();
   } catch (err) {
     console.warn('Could not play the discovery ding:', err);
@@ -591,7 +696,8 @@ function playDiscoveryDing() {
 
 let discoveryBannerTimeout = null;
 
-function showDiscoveryBanner(text, distance) {
+function showDiscoveryBanner(label, text, distance) {
+  discoveryBannerLabel.textContent = label;
   discoveryBannerText.textContent = text;
   discoveryBannerDistance.textContent = distance || '';
   discoveryBanner.classList.remove('hidden');
