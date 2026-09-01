@@ -1,30 +1,28 @@
 // routes/guide-upload.ts — POST /api/guide
 //
-// Flow: parse FormData -> extract text from a PDF (unpdf) or EPUB (lib/epub.ts)
-// (fail-loud: a guide with no readable text is useless, mirrors identify.ts's
-// Claude Vision failure handling) -> only on success: persist the file to R2
-// -> chunk each unit's text -> for each chunk (up to MAX_CHUNKS), ask Claude
-// for the one specific place it's about, then geocode that place via Mapbox
-// (both steps degrade-gracefully per-chunk — see lib/claude.ts and
-// lib/mapbox.ts's never-throw contracts for extractPlaceName/geocodePlaceName)
-// -> batch-insert all chunks into guide_chunks.
+// Flow: accept plain pasted/typed text (no file, no PDF/EPUB parsing) ->
+// chunk it -> for each chunk (up to MAX_CHUNKS), ask Claude for the one
+// specific place it's about, then geocode that place via Mapbox (both steps
+// degrade-gracefully per-chunk — see lib/claude.ts and lib/mapbox.ts's
+// never-throw contracts for extractPlaceName/geocodePlaceName) -> batch-
+// insert all chunks into guide_chunks.
 //
-// PDF and EPUB extraction both reduce to the same shape — an ordered list of
-// unit texts (PDF pages, EPUB spine sections) — so everything downstream of
-// extraction (chunking, geocoding, storage) is format-agnostic. guide_chunks'
-// source_page column holds a PDF page number or an EPUB spine index
-// depending on format; it's a 1-based position either way, not reused for
-// anything else, so no schema change was needed to support both.
+// This used to accept PDF/EPUB file uploads (extracted via unpdf/fflate).
+// That's gone — parsing arbitrary binary guidebooks turned out to fight
+// Workers' platform limits (100MB request bodies, 128MB memory) for
+// marginal benefit over just letting someone paste the text they actually
+// want matched. guide_chunks' source_page column is repurposed here as a
+// 1-based paragraph-chunk-group index rather than a real page/section
+// number — it's not read for anything except ordering, so this needed no
+// schema change.
 //
 // MAX_CHUNKS is deliberately conservative: each geocoded chunk costs two
 // subrequests (Claude + Mapbox), and Workers' Free plan caps a single
-// invocation at 50 subrequests total. 20 chunks * 2 = 40, leaving
-// headroom for the R2 write and D1 batch. Revisit once the account's
-// actual plan/limits are confirmed — see the wrangler.toml deploy notes.
+// invocation at 50 subrequests total. 20 chunks * 2 = 40, leaving headroom
+// for the D1 batch. Revisit once the account's actual plan/limits are
+// confirmed — see the wrangler.toml deploy notes.
 
 import type { Env, GuideUploadResponse } from '../types';
-import { getDocumentProxy, extractText } from 'unpdf';
-import { extractEpubText } from '../lib/epub';
 import { extractPlaceName } from '../lib/claude';
 import { geocodePlaceName } from '../lib/mapbox';
 import { findOrCreateTrip } from '../lib/trips';
@@ -32,9 +30,8 @@ import { jsonError } from '../lib/http';
 
 const MAX_CHUNK_CHARS = 1500; // ~300-400 words — small enough for a focused single-place extraction, large enough to keep excerpts meaningful
 const MAX_CHUNKS = 20; // see file header
+const MAX_TEXT_CHARS = 60000; // generous for pasted notes/excerpts — this is typing/pasting, not a whole book
 const MIN_EXTRACTION_CONFIDENCE = 0.5; // below this, skip the geocoding call entirely rather than spend a subrequest on a low-confidence guess
-
-type GuideFormat = 'pdf' | 'epub';
 
 interface ChunkCandidate {
   sourcePage: number;
@@ -42,85 +39,41 @@ interface ChunkCandidate {
 }
 
 export async function handleGuideUpload(request: Request, env: Env): Promise<Response> {
-  // ---- Parse incoming form ----
-  let form: FormData;
+  let body: unknown;
   try {
-    form = await request.formData();
+    body = await request.json();
   } catch (err) {
-    return jsonError(400, 'invalid_form', 'Could not parse multipart form data.');
+    return jsonError(400, 'invalid_json', 'Request body must be JSON.');
   }
 
-  const file = form.get('file');
-  if (!(file instanceof File) || file.size === 0) {
-    return jsonError(400, 'missing_file', 'No guide file (PDF or EPUB) was included in the request.');
+  const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
+
+  const text = typeof record.text === 'string' ? record.text.trim() : '';
+  if (text.length === 0) {
+    return jsonError(400, 'missing_text', 'A non-empty "text" field is required.');
+  }
+  if (text.length > MAX_TEXT_CHARS) {
+    return jsonError(413, 'text_too_long', `"text" exceeds the ${MAX_TEXT_CHARS}-character limit.`);
   }
 
-  const format = detectGuideFormat(file);
-  if (format === null) {
-    return jsonError(400, 'unsupported_format', 'Guide must be a PDF or EPUB file.');
-  }
-
-  const maxBytes = Number(env.MAX_GUIDE_UPLOAD_BYTES);
-  if (file.size > maxBytes) {
-    return jsonError(413, 'file_too_large', `Guide exceeds the ${maxBytes}-byte limit.`);
-  }
-
-  const rawTripName = form.get('tripName');
-  const tripName = typeof rawTripName === 'string' ? rawTripName.trim() : '';
+  const tripName = typeof record.tripName === 'string' ? record.tripName.trim() : '';
   if (tripName.length === 0) {
     return jsonError(400, 'missing_trip_name', 'A tripName is required — every guide chunk belongs to a trip.');
   }
 
-  // ---- Extract text (fail-loud: an unreadable guide is useless) ----
-  const fileBytes = await file.arrayBuffer();
-
-  let totalSections: number;
-  let sectionTexts: string[];
-  try {
-    if (format === 'pdf') {
-      // pdf.js takes ownership of the buffer backing the Uint8Array it's
-      // given — it transfers/detaches it internally rather than copying, so
-      // parsing silently zeroes out `fileBytes` unless we hand it an
-      // independent copy. Confirmed empirically: without .slice(0) here,
-      // the R2 write below stores a 0-byte object every time. fflate (the
-      // EPUB path) doesn't have this behavior, so it needs no such copy.
-      const doc = await getDocumentProxy(new Uint8Array(fileBytes.slice(0)));
-      const extracted = await extractText(doc, { mergePages: false });
-      totalSections = extracted.totalPages;
-      sectionTexts = extracted.text;
-    } else {
-      const extracted = await extractEpubText(fileBytes);
-      totalSections = extracted.totalSections;
-      sectionTexts = extracted.sectionTexts;
-    }
-  } catch (err) {
-    console.error(`Guide text extraction failed (${format}):`, err);
-    return jsonError(502, 'guide_parse_failed', "Couldn't read that guide. Try a different file.");
-  }
-
-  // ---- Only now: persist ----
   const tripId = await findOrCreateTrip(env, tripName);
 
   // This app models one active guide per trip (guide_chunks isn't grouped by
-  // upload/guide id, and neither identify.ts's match nor guide-lookup.ts's
-  // search de-dupes across uploads) — so re-uploading for the same trip
-  // replaces its prior chunks rather than accumulating alongside them.
+  // upload id, and neither identify.ts's match nor guide-lookup.ts's search
+  // de-dupes across uploads) — so re-uploading for the same trip replaces
+  // its prior chunks rather than accumulating alongside them.
   await env.DB.prepare('DELETE FROM guide_chunks WHERE trip_id = ?').bind(tripId).run();
 
-  const extension = format === 'pdf' ? 'pdf' : 'epub';
-  const defaultContentType = format === 'pdf' ? 'application/pdf' : 'application/epub+zip';
-  const guideKey = `${tripId}/${crypto.randomUUID()}.${extension}`;
-  await env.GUIDES.put(guideKey, fileBytes, {
-    httpMetadata: { contentType: file.type || defaultContentType },
-  });
-
-  // ---- Chunk every section's text ----
-  const allCandidates: ChunkCandidate[] = [];
-  sectionTexts.forEach((sectionText, index) => {
-    for (const chunkText of chunkPageText(sectionText, MAX_CHUNK_CHARS)) {
-      allCandidates.push({ sourcePage: index + 1, text: chunkText });
-    }
-  });
+  // ---- Chunk the text ----
+  const allCandidates: ChunkCandidate[] = chunkPageText(text, MAX_CHUNK_CHARS).map((chunkText, index) => ({
+    sourcePage: index + 1,
+    text: chunkText,
+  }));
 
   const truncated = allCandidates.length > MAX_CHUNKS;
   const candidates = allCandidates.slice(0, MAX_CHUNKS);
@@ -164,7 +117,6 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
 
   const response: GuideUploadResponse = {
     tripId,
-    totalSections,
     chunksCreated: rows.length,
     chunksGeocoded: rows.filter((r) => r.lat !== null).length,
     truncated,
@@ -178,17 +130,10 @@ export async function handleGuideUpload(request: Request, env: Env): Promise<Res
 
 // ---- Helpers ----
 
-function detectGuideFormat(file: File): GuideFormat | null {
-  const name = file.name.toLowerCase();
-  if (file.type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
-  if (file.type === 'application/epub+zip' || name.endsWith('.epub')) return 'epub';
-  return null;
-}
-
 // Greedily packs paragraphs (blank-line-separated) up to maxChars per
 // chunk. A single paragraph longer than maxChars on its own gets hard-split
 // rather than broken on sentence boundaries — good enough for this scope;
-// travel-guide prose rarely has paragraphs anywhere near this long.
+// travel notes rarely have paragraphs anywhere near this long.
 function chunkPageText(pageText: string, maxChars: number): string[] {
   const trimmed = pageText.trim();
   if (trimmed.length === 0) return [];

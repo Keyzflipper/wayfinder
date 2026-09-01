@@ -5,9 +5,9 @@
 // Bump this whenever index.html/main.js/styles.css change — browsers detect
 // a service worker update by diffing sw.js's own bytes, not anything cached
 // inside it, so a version-only change here is what actually busts stale
-// shells for returning users. (Last bumped: spoken discovery narration +
-// POI/restaurant passive alerts.)
-const CACHE_VERSION = 'wayfinder-v6';
+// shells for returning users. (Last bumped: replaced PDF/EPUB guide upload
+// with plain-text notes; 1-mile default radius.)
+const CACHE_VERSION = 'wayfinder-v7';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 

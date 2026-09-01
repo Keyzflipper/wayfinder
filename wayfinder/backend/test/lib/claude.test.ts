@@ -1,6 +1,6 @@
 import { env, fetchMock } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { identifyImage, ClaudeVisionError, extractPlaceName } from '../../src/lib/claude';
+import { identifyImage, ClaudeVisionError, extractPlaceName, describeNearbyPlace } from '../../src/lib/claude';
 
 // Matches the gateway URL built in lib/claude.ts from the test bindings
 // set in vitest.config.ts (CLOUDFLARE_ACCOUNT_ID / AI_GATEWAY_ID).
@@ -123,5 +123,60 @@ describe('extractPlaceName', () => {
     mockGatewayReply({ content: [{ type: 'text', text: JSON.stringify({ placeName: '   ', confidence: 0.9 }) }] });
 
     await expect(extractPlaceName(env, 'some text')).resolves.toEqual({ placeName: null, confidence: 0 });
+  });
+});
+
+describe('describeNearbyPlace', () => {
+  it('returns the final text block after a web-search tool-use turn', async () => {
+    // A real web-search response interleaves server_tool_use/
+    // web_search_tool_result blocks with text — the final block is the
+    // one worth reading, not the first (which may just be "let me search").
+    mockGatewayReply({
+      content: [
+        { type: 'text', text: "I'll look that up." },
+        { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: { query: 'Independence Hall' } },
+        { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_1', content: [] },
+        { type: 'text', text: 'Independence Hall is where the Declaration of Independence was signed in 1776.' },
+      ],
+    });
+
+    const result = await describeNearbyPlace(env, 'Independence Hall', 'near 39.9489, -75.1503');
+
+    expect(result).toBe('Independence Hall is where the Declaration of Independence was signed in 1776.');
+  });
+
+  it('returns the single text block when no tool use happened', async () => {
+    mockGatewayReply({ content: [{ type: 'text', text: 'A quiet neighborhood park.' }] });
+
+    const result = await describeNearbyPlace(env, 'Some Park', 'near 40.0, -75.0');
+
+    expect(result).toBe('A quiet neighborhood park.');
+  });
+
+  it('returns null when the model finds nothing specific', async () => {
+    mockGatewayReply({ content: [{ type: 'text', text: 'NONE' }] });
+
+    await expect(describeNearbyPlace(env, 'Unknown Spot', 'near 0, 0')).resolves.toBeNull();
+  });
+
+  it('never throws on a non-OK gateway response', async () => {
+    mockGatewayReply('upstream exploded', 500);
+
+    await expect(describeNearbyPlace(env, 'Some Place', 'near 0, 0')).resolves.toBeNull();
+  });
+
+  it('never throws when the response body is not valid JSON', async () => {
+    fetchMock
+      .get('https://gateway.ai.cloudflare.com')
+      .intercept({ method: 'POST', path: GATEWAY_PATH })
+      .reply(200, 'not json at all');
+
+    await expect(describeNearbyPlace(env, 'Some Place', 'near 0, 0')).resolves.toBeNull();
+  });
+
+  it('returns null when there is no text content block at all', async () => {
+    mockGatewayReply({ content: [{ type: 'server_tool_use', id: 'x', name: 'web_search', input: {} }] });
+
+    await expect(describeNearbyPlace(env, 'Some Place', 'near 0, 0')).resolves.toBeNull();
   });
 });

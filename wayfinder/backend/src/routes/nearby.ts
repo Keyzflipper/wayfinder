@@ -10,8 +10,8 @@ import { fetchNearbyPois } from '../lib/mapbox';
 import { formatDistance } from '../lib/format';
 import { jsonError, parseCoord, parsePositiveInt } from '../lib/http';
 
-const DEFAULT_RADIUS_METERS = 500;
-const MAX_RADIUS_METERS = 2000;
+const DEFAULT_RADIUS_METERS = 1609; // ~1 mile
+const MAX_RADIUS_METERS = 3200; // ~2 miles
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50; // mirrors mapbox.ts's own ceiling
 

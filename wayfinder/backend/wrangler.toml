@@ -1,7 +1,6 @@
 name = "wayfinder-api"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]  # needed for PDF parsing (unpdf) in routes/guide-upload.ts
 
 # ============================================================
 # Static assets — serves the PWA (../frontend) from this same Worker/
@@ -24,15 +23,16 @@ database_name = "wayfinder-db"
 database_id = "83f8e45f-d3d9-43cc-9790-9c22d6cb222c"
 
 # ============================================================
-# R2 — binary storage, split by lifecycle
+# R2 — captured shutter photos. The old GUIDES bucket (uploaded
+# PDF/EPUB guides) is gone along with file-based guide upload — guides are
+# plain pasted text now, stored directly in D1's guide_chunks, no binary
+# storage needed. The wayfinder-guides bucket itself and its now-orphaned
+# objects were left alone rather than deleted — real infra deletion wasn't
+# part of this change; delete it manually via the dashboard if you want it gone.
 # ============================================================
 [[r2_buckets]]
 binding = "PHOTOS"
 bucket_name = "wayfinder-photos"
-
-[[r2_buckets]]
-binding = "GUIDES"
-bucket_name = "wayfinder-guides"
 
 # ============================================================
 # Non-secret config. Safe to commit.
@@ -49,7 +49,6 @@ bucket_name = "wayfinder-guides"
 [vars]
 ENVIRONMENT = "development"
 MAX_PHOTO_UPLOAD_BYTES = "8388608"  # 8 MB cap on a single capture
-MAX_GUIDE_UPLOAD_BYTES = "52428800"  # 50 MB cap on a single travel-guide upload (PDF or EPUB) — real guidebooks with cover art/illustrations routinely exceed 20MB
 CLOUDFLARE_ACCOUNT_ID = "946b6f72ba4124bb4d0ba7a1c9c6ea49"
 AI_GATEWAY_ID = "wayfinder-gateway"
 

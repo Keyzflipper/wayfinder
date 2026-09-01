@@ -3,7 +3,7 @@ node_modules/
 .dev.vars
 *.log
 
-# Drop-folder for scripts/upload-guides.mjs — real guidebook files (personal,
-# often copyrighted, sometimes large) don't belong in the repo.
+# Drop-folder for scripts/upload-guides.mjs — personal travel notes (.txt)
+# don't belong in the repo.
 /guides/*
 !/guides/.gitkeep

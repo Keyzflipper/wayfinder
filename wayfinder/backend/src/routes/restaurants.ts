@@ -10,7 +10,7 @@ import { fetchNearbyRestaurants } from '../lib/googlePlaces';
 import { formatDistance } from '../lib/format';
 import { jsonError, parseCoord, parsePositiveInt } from '../lib/http';
 
-const DEFAULT_RADIUS_METERS = 1000;
+const DEFAULT_RADIUS_METERS = 1609; // ~1 mile
 const MAX_RADIUS_METERS = 5000;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 20; // mirrors googlePlaces.ts's own ceiling

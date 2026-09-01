@@ -263,23 +263,18 @@
         </button>
       </div>
 
-      <!-- Upload form -->
+      <!-- Text entry -->
       <div id="guide-upload-form" class="hidden flex-col gap-3">
         <p class="font-body text-sm text-chart/70">
-          Upload a travel guide (PDF or EPUB) for <span id="guide-upload-trip-name" class="text-chart font-medium"></span>. Wayfinder reads it and matches excerpts to what you photograph nearby.
+          Paste or type travel notes for <span id="guide-upload-trip-name" class="text-chart font-medium"></span>. Wayfinder finds the places mentioned and matches them to what's nearby.
         </p>
 
-        <input type="file" id="guide-file-input" accept="application/pdf,application/epub+zip,.pdf,.epub" class="hidden" />
-
-        <button
-          id="guide-choose-file-button"
-          type="button"
-          class="self-start font-body text-sm border border-chart/20 rounded-sm px-4 py-2 hover:border-brass hover:text-brass transition-colors"
-        >
-          Choose file
-        </button>
-
-        <p id="guide-selected-file" class="hidden font-data text-xs text-chart/60"></p>
+        <textarea
+          id="guide-text-input"
+          rows="8"
+          placeholder="Independence Hall is a historic building in Philadelphia where the Declaration of Independence was signed..."
+          class="font-body text-sm bg-transparent border border-chart/20 rounded-sm px-3 py-2 focus:outline-none focus:border-brass resize-y"
+        ></textarea>
 
         <button
           id="guide-upload-button"
@@ -287,7 +282,7 @@
           disabled
           class="self-start font-body text-sm bg-rust text-parchment rounded-sm px-4 py-2 hover:bg-rust/90 transition-colors disabled:opacity-40 disabled:pointer-events-none"
         >
-          Upload
+          Add
         </button>
       </div>
 

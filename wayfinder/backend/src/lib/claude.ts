@@ -251,6 +251,90 @@ export async function extractPlaceName(env: Env, chunkText: string): Promise<Pla
   }
 }
 
+// ---- Nearby-place description (walking mode, POI web search) ----
+//
+// Contract: never throws — same reasoning as extractPlaceName(). A failed
+// or empty search just means the caller falls back to a plain
+// name/category/distance announcement instead of a researched blurb.
+
+// sonnet, not haiku: this runs Anthropic's server-side web_search tool,
+// which needs real reasoning to pick a good query and read results, not
+// just single-field classification the way extractPlaceName()'s haiku call
+// does.
+const DESCRIBE_MODEL = 'claude-sonnet-5';
+const DESCRIBE_MAX_TOKENS = 300;
+const DESCRIBE_TIMEOUT_MS = 15000;
+
+const DESCRIBE_SYSTEM_PROMPT = `You are a knowledgeable local pointing out something nearby to a traveler who is walking past it. Given a place name and its general location, search the web for real, current information about it and respond with ONE OR TWO SHORT SENTENCES suitable for being spoken aloud — why it's worth knowing about, a notable fact, or what it's known for.
+
+No markdown, no citations, no preamble like "According to..." or "I found that...". Just the sentences themselves. If you can't find anything specific and reliable about this exact place, respond with exactly: NONE`;
+
+export async function describeNearbyPlace(env: Env, placeName: string, locationContext: string): Promise<string | null> {
+  const url = `https://gateway.ai.cloudflare.com/v1/${env.CLOUDFLARE_ACCOUNT_ID}/${env.AI_GATEWAY_ID}/anthropic/v1/messages`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DESCRIBE_TIMEOUT_MS);
+
+  try {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: DESCRIBE_MODEL,
+          max_tokens: DESCRIBE_MAX_TOKENS,
+          system: DESCRIBE_SYSTEM_PROMPT,
+          tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
+          messages: [{ role: 'user', content: `Place: ${placeName}\nLocation: ${locationContext}` }],
+        }),
+      });
+    } catch (err) {
+      console.warn('describeNearbyPlace: request failed to send.', err);
+      return null;
+    }
+
+    if (!response.ok) {
+      console.warn(`describeNearbyPlace: gateway returned ${response.status}.`);
+      return null;
+    }
+
+    const payload = await response.json().catch(() => null);
+    const text = payload === null ? null : extractLastTextBlock(payload);
+    if (text === null) return null;
+
+    const trimmed = text.trim();
+    if (trimmed.length === 0 || trimmed.toUpperCase() === 'NONE') return null;
+    return trimmed;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Unlike extractTextBlock() (first block — a plain non-tool-use response has
+// exactly one), a web-search turn's content array can interleave
+// server_tool_use/web_search_tool_result blocks with text, and may include
+// intermediate "let me search for that" text before the final answer — the
+// LAST text block is the one actually worth reading.
+function extractLastTextBlock(payload: unknown): string | null {
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'content' in payload &&
+    Array.isArray((payload as { content: unknown }).content)
+  ) {
+    const content = (payload as { content: Array<{ type?: string; text?: string }> }).content;
+    const blocks = content.filter((b) => b.type === 'text' && typeof b.text === 'string');
+    return blocks[blocks.length - 1]?.text ?? null;
+  }
+  return null;
+}
+
 // Chunked to avoid "Maximum call stack size exceeded" from spreading a large
 // Uint8Array into String.fromCharCode(...bytes) — a real failure mode for
 // photo-sized buffers, not a theoretical one.

@@ -6,13 +6,14 @@
 // failures there).
 //
 // All routes below have real handlers now: /api/identify, /api/nearby,
-// /api/restaurants, /api/guide (upload), /api/guide/nearby (lookup),
-// /api/trips, /api/finds, and /api/photos.
+// /api/restaurants, /api/describe, /api/guide (upload), /api/guide/nearby
+// (lookup), /api/trips, /api/finds, and /api/photos.
 
 import type { Env } from './types';
 import { handleIdentify } from './routes/identify';
 import { handleNearby } from './routes/nearby';
 import { handleRestaurants } from './routes/restaurants';
+import { handleDescribe } from './routes/describe';
 import { handleGuideUpload } from './routes/guide-upload';
 import { handleGuideLookup } from './routes/guide-lookup';
 import { handleListTrips } from './routes/trips';
@@ -51,6 +52,10 @@ export default {
 
       if (url.pathname === '/api/restaurants' && request.method === 'GET') {
         return withCors(await handleRestaurants(request, env));
+      }
+
+      if (url.pathname === '/api/describe' && request.method === 'GET') {
+        return withCors(await handleDescribe(request, env));
       }
 
       if (url.pathname === '/api/guide' && request.method === 'POST') {

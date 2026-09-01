@@ -14,7 +14,6 @@ const appState = {
   lastPhotoBlob: null,
   lastTripId: null,        // from the most recent /api/identify response — powers "More from your guide nearby"
   lastFindPosition: null,  // the position actually SENT with that request — not live `position`, which can drift before "more" is tapped
-  selectedGuideFile: null,
   // Passive discovery (walking mode): always on whenever GPS is available —
   // guide excerpts (if a trip's guide is loaded), notable nearby POIs, and
   // well-reviewed restaurants all feed the same alert, throttled so it
@@ -72,9 +71,7 @@ const guideSetTripButton = document.getElementById('guide-set-trip-button');
 
 const guideUploadForm = document.getElementById('guide-upload-form');
 const guideUploadTripNameEl = document.getElementById('guide-upload-trip-name');
-const guideFileInput = document.getElementById('guide-file-input');
-const guideChooseFileButton = document.getElementById('guide-choose-file-button');
-const guideSelectedFileEl = document.getElementById('guide-selected-file');
+const guideTextInput = document.getElementById('guide-text-input');
 const guideUploadButton = document.getElementById('guide-upload-button');
 
 const guideStatusEl = document.getElementById('guide-status');
@@ -308,16 +305,13 @@ function renderGuideSheetTripState() {
   }
 }
 
-function clearGuideFileSelection() {
-  appState.selectedGuideFile = null;
-  guideFileInput.value = '';
-  guideSelectedFileEl.textContent = '';
-  guideSelectedFileEl.classList.add('hidden');
+function clearGuideTextInput() {
+  guideTextInput.value = '';
   guideUploadButton.disabled = true;
 }
 
 function resetGuideUploadForm() {
-  clearGuideFileSelection();
+  clearGuideTextInput();
   guideStatusEl.innerHTML = '';
   guideStatusEl.classList.add('hidden');
   guideStatusEl.classList.remove('flex');
@@ -340,20 +334,8 @@ function handleGuideSetTripButtonClick() {
   openTripsSheet();
 }
 
-function handleGuideChooseFileClick() {
-  guideFileInput.click();
-}
-
-function handleGuideFileChange() {
-  const file = guideFileInput.files?.[0] ?? null;
-  appState.selectedGuideFile = file;
-  if (file) {
-    guideSelectedFileEl.textContent = file.name;
-    guideSelectedFileEl.classList.remove('hidden');
-  } else {
-    guideSelectedFileEl.classList.add('hidden');
-  }
-  guideUploadButton.disabled = !file;
+function handleGuideTextInputChange() {
+  guideUploadButton.disabled = guideTextInput.value.trim().length === 0;
   guideStatusEl.innerHTML = '';
   guideStatusEl.classList.add('hidden');
   guideStatusEl.classList.remove('flex');
@@ -366,27 +348,24 @@ function showGuideStatus(html) {
 }
 
 async function handleGuideUploadClick() {
-  if (!appState.selectedGuideFile || !appState.activeTripName) return;
+  const text = guideTextInput.value.trim();
+  if (!text || !appState.activeTripName) return;
 
   guideUploadButton.disabled = true;
-  showGuideStatus('<p class="font-data text-xs text-seaglass">Reading your guide&hellip; this can take a little while.</p>');
+  showGuideStatus('<p class="font-data text-xs text-seaglass">Reading your notes&hellip;</p>');
 
   try {
-    const formData = new FormData();
-    formData.append('file', appState.selectedGuideFile);
-    formData.append('tripName', appState.activeTripName);
-
     const response = await fetch(`${API_BASE}/guide`, {
       method: 'POST',
-      body: formData,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text, tripName: appState.activeTripName }),
     });
 
     if (!response.ok) {
-      // Surface the server's actual reason (too large, unreadable file, etc.)
-      // instead of a generic message — a clean 4xx/5xx isn't a connection
-      // problem, and guessing wrong here just sends people down the wrong
-      // troubleshooting path.
-      let message = `Guide upload failed (${response.status}).`;
+      // Surface the server's actual reason instead of a generic message —
+      // a clean 4xx isn't a connection problem, and guessing wrong here
+      // just sends people down the wrong troubleshooting path.
+      let message = `Couldn't add those notes (${response.status}).`;
       try {
         const errorBody = await response.json();
         if (errorBody?.message) message = errorBody.message;
@@ -397,25 +376,25 @@ async function handleGuideUploadClick() {
     }
 
     const result = await response.json();
-    // Newly known (or re-confirmed) now that the guide's actually been
+    // Newly known (or re-confirmed) now that the text's actually been
     // processed — this is what lets passive discovery start checking
     // /api/guide/nearby without the user having to open the trips sheet first.
     appState.activeTripId = result.tripId;
     appState.passiveAlertedIds.clear();
 
     const truncatedNote = result.truncated
-      ? '<p class="font-body text-xs text-seaglass mt-1">This guide had more than Wayfinder processes in one upload — only the first chunks were matched.</p>'
+      ? '<p class="font-body text-xs text-seaglass mt-1">That was more than Wayfinder processes in one go — only the first part was matched.</p>'
       : '';
     showGuideStatus(`
-      <p class="font-body text-sm text-chart">Guide added — ${result.chunksCreated} excerpt${result.chunksCreated === 1 ? '' : 's'} from ${result.totalSections} section${result.totalSections === 1 ? '' : 's'}, ${result.chunksGeocoded} matched to a place.</p>
+      <p class="font-body text-sm text-chart">Added — ${result.chunksCreated} excerpt${result.chunksCreated === 1 ? '' : 's'}, ${result.chunksGeocoded} matched to a place.</p>
       ${truncatedNote}
     `);
-    clearGuideFileSelection();
+    clearGuideTextInput();
   } catch (err) {
-    console.error('Guide upload failed:', err);
+    console.error('Guide text upload failed:', err);
     const message = err instanceof TypeError
-      ? "Couldn't upload that guide — check your connection and try again."
-      : err.message || "Couldn't upload that guide — check your connection and try again.";
+      ? "Couldn't add those notes — check your connection and try again."
+      : err.message || "Couldn't add those notes — check your connection and try again.";
     showGuideStatus(`<p class="font-body text-sm text-rust">${message}</p>`);
     guideUploadButton.disabled = false;
   }
@@ -514,9 +493,9 @@ function handleGpsStripClick() {
 // GPS tick.
 const PASSIVE_CHECK_MIN_INTERVAL_MS = 20000;
 const PASSIVE_CHECK_MIN_DISTANCE_METERS = 40;
-const PASSIVE_GUIDE_RADIUS_METERS = 150;
-const PASSIVE_POI_RADIUS_METERS = 100; // tighter than guide/restaurant — POIs are dense in cities, this keeps it to what's genuinely close
-const PASSIVE_RESTAURANT_RADIUS_METERS = 120;
+const PASSIVE_GUIDE_RADIUS_METERS = 1609; // ~1 mile
+const PASSIVE_POI_RADIUS_METERS = 1609;
+const PASSIVE_RESTAURANT_RADIUS_METERS = 1609;
 const PASSIVE_BANNER_DURATION_MS = 10000;
 const SPEECH_MAX_CHARS = 240; // a spoken excerpt this long already runs ~15-20s; the banner shows the rest for reading
 
@@ -593,6 +572,7 @@ async function fetchPoiAlert(lat, lon) {
     spoken: `${match.name}, ${categoryLabel}, ${match.distance} away.`,
     detail: `${match.name}${match.category ? ` — ${categoryLabel}` : ''}`,
     distance: match.distance,
+    poiName: match.name, // carried through so runPassiveDiscoveryCheck can look up a real description only if this alert actually wins
   };
 }
 
@@ -616,6 +596,19 @@ async function fetchRestaurantAlert(lat, lon) {
   };
 }
 
+async function fetchPlaceDescription(name, lat, lon) {
+  try {
+    const params = new URLSearchParams({ name, lat: String(lat), lon: String(lon) });
+    const response = await fetch(`${API_BASE}/describe?${params}`);
+    if (!response.ok) return null;
+    const { description } = await response.json();
+    return typeof description === 'string' && description.length > 0 ? description : null;
+  } catch (err) {
+    console.warn('Place description lookup failed:', err);
+    return null;
+  }
+}
+
 async function runPassiveDiscoveryCheck(lat, lon) {
   try {
     // Run all three in parallel for latency, then apply priority ordering —
@@ -626,8 +619,18 @@ async function runPassiveDiscoveryCheck(lat, lon) {
       fetchRestaurantAlert(lat, lon),
     ]);
 
-    const alert = guideAlert || poiAlert || restaurantAlert;
+    let alert = guideAlert || poiAlert || restaurantAlert;
     if (!alert) return;
+
+    // A real "why it's worth seeing" blurb beats the generic templated
+    // line, but it's a live web search — only spend it on the one place
+    // that actually won the priority pick above, not every POI candidate.
+    if (alert === poiAlert) {
+      const description = await fetchPlaceDescription(poiAlert.poiName, lat, lon);
+      if (description) {
+        alert = { ...alert, spoken: description, detail: description };
+      }
+    }
 
     appState.passiveAlertedIds.add(alert.id);
     announceDiscovery(alert);
@@ -974,8 +977,7 @@ function init() {
   guideSheetCloseButton.addEventListener('click', closeGuideSheet);
   guideBackdrop.addEventListener('click', closeGuideSheet);
   guideSetTripButton.addEventListener('click', handleGuideSetTripButtonClick);
-  guideChooseFileButton.addEventListener('click', handleGuideChooseFileClick);
-  guideFileInput.addEventListener('change', handleGuideFileChange);
+  guideTextInput.addEventListener('input', handleGuideTextInputChange);
   guideUploadButton.addEventListener('click', handleGuideUploadClick);
 
   tripsSheetCloseButton.addEventListener('click', closeTripsSheet);

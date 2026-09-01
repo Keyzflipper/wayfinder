@@ -12,8 +12,6 @@ export interface Env {
   // ---- R2 ----
   // binding = "PHOTOS" — captured shutter photos
   PHOTOS: R2Bucket;
-  // binding = "GUIDES" — uploaded travel guide PDFs
-  GUIDES: R2Bucket;
 
   // ---- Secrets ----
   // Set via `wrangler secret put` (prod) or `.dev.vars` (local).
@@ -29,7 +27,6 @@ export interface Env {
   // Set in wrangler.toml [vars] — plain config, safe to commit.
   ENVIRONMENT: 'development' | 'production';
   MAX_PHOTO_UPLOAD_BYTES: string; // Wrangler vars are always strings; parse with Number() where used
-  MAX_GUIDE_UPLOAD_BYTES: string;
   // AI Gateway routing — combine into the gateway URL:
   // https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{AI_GATEWAY_ID}/anthropic/v1/messages
   CLOUDFLARE_ACCOUNT_ID: string;
@@ -92,10 +89,13 @@ export interface IdentifyResponse {
 
 export interface GuideUploadResponse {
   tripId: string;
-  totalSections: number; // PDF page count or EPUB spine-section count, depending on format
   chunksCreated: number;
   chunksGeocoded: number;
-  truncated: boolean; // true if the guide had more chunks than a single upload processes — see routes/guide-upload.ts's MAX_CHUNKS
+  truncated: boolean; // true if the text had more chunks than a single upload processes — see routes/guide-upload.ts's MAX_CHUNKS
+}
+
+export interface DescribeResponse {
+  description: string | null; // null when the search found nothing specific/reliable, or the lookup failed — see lib/claude.ts's describeNearbyPlace()
 }
 
 export interface NearbyGuideChunkResult {

@@ -14,11 +14,6 @@
     "test:identify": "bash scripts/test-identify.sh",
     "guides:upload": "node scripts/upload-guides.mjs"
   },
-  "dependencies": {
-    "fast-xml-parser": "^5.11.1",
-    "fflate": "^0.8.3",
-    "unpdf": "^0.11.0"
-  },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
     "@cloudflare/workers-types": "^5.20260830.1",
