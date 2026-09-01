@@ -1,1 +1,6 @@
 .wrangler/
+
+# A second guide drop-folder that ended up at repo root (from a separate,
+# concurrent Claude Code session) — real guidebook files, same reasoning as
+# wayfinder/backend/guides/: personal/copyrighted, don't belong in the repo.
+/wayfinder/guide_books/
